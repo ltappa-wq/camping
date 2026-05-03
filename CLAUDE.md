@@ -5,7 +5,7 @@ A multi-tenant campsite/RV park booking platform. Operators manage their invento
 ## Tech Stack
 
 - **Framework**: Next.js 15 (App Router), TypeScript
-- **Database**: Postgres (Neon)
+- **Database**: Postgres (Supabase)
 - **ORM**: Prisma
 - **Styling**: Tailwind CSS + shadcn/ui (components copied into `src/components/ui`, not a dependency)
 - **Auth**: Auth.js v5 (NextAuth) — email magic-link only, no passwords
