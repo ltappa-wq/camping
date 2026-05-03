@@ -1,0 +1,584 @@
+// =============================================================================
+// Campsite Booking Platform — Prisma Schema (MVP v1)
+// =============================================================================
+// Scope: SaaS, US-only, invite-only operator onboarding, Stripe Connect Express
+// Stay types: nightly / weekly / monthly / seasonal (no auto-recurring billing)
+// All money stored as integer cents (USD only for v1, currency field reserved)
+// All percentages stored as basis points (100 bps = 1.00%) to avoid floats
+//
+// NOTE: After running `prisma migrate dev`, apply the companion migration
+//       `add_reservation_exclusion_constraint.sql` to enforce no-overlap on
+//       confirmed reservations. The exclusion constraint cannot be expressed
+//       in Prisma DSL; it must be added via raw SQL.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum OperatorRole {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+enum ChargeUnit {
+  NIGHT
+  WEEK
+  MONTH
+  SEASON
+}
+
+enum StayType {
+  NIGHTLY
+  WEEKLY
+  MONTHLY
+  SEASONAL
+}
+
+enum ReservationStatus {
+  DRAFT        // in cart, pre-payment
+  HELD         // payment in flight; brief soft-lock on the site
+  CONFIRMED    // payment captured; firm booking
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum LineItemType {
+  STAY      // base nights / weeks / months / season charge
+  ADDON     // firewood, etc.
+  DISCOUNT  // operator-applied discount (negative amount)
+  TAX       // tax line item
+  FEE       // cleaning fee, pet fee, etc.
+}
+
+enum EmailTemplateType {
+  RESERVATION_CONFIRMATION
+  ARRIVAL_REMINDER
+  BALANCE_DUE
+  CANCELLATION
+  GUEST_PROFILE_CLAIM   // magic-link to upgrade guest checkout into saved profile
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+// =============================================================================
+// PLATFORM TIER: Organization, OperatorUser, Invite
+// =============================================================================
+
+model Organization {
+  id                       String   @id @default(cuid())
+  name                     String
+
+  // Platform fee is configurable per org (basis points; 100 = 1.00%)
+  platformFeeBasisPoints   Int      @default(100)
+
+  // Stripe Connect (Express)
+  stripeAccountId          String?  @unique
+  stripeOnboardingComplete Boolean  @default(false)
+  stripeChargesEnabled     Boolean  @default(false)
+  stripePayoutsEnabled     Boolean  @default(false)
+
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  operatorUsers            OperatorUser[]
+  properties               Property[]
+  invites                  Invite[]
+}
+
+model OperatorUser {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  email          String       @unique
+  name           String
+  role           OperatorRole @default(STAFF)
+
+  // Auth: nullable so we can support both password and magic-link login.
+  // NextAuth/Auth.js will manage Sessions/Accounts/VerificationTokens in
+  // separate tables added by its adapter migration.
+  passwordHash   String?
+  emailVerified  DateTime?
+  lastLoginAt    DateTime?
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+// Single-use invite tokens for invite-only onboarding (no public signup).
+model Invite {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  email          String
+  role           OperatorRole @default(OWNER)
+  token          String       @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([token])
+}
+
+// =============================================================================
+// PROPERTY: the campground itself
+// =============================================================================
+
+model Property {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  slug           String       @unique  // public URL: /p/[slug]
+  name           String
+
+  // Contact / location
+  phone          String?
+  email          String?
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  state          String?
+  postalCode     String?
+
+  // Branding
+  logoUrl        String?
+  primaryColor   String?      // hex; optional
+
+  currency       String       @default("USD")
+
+  // Seasonal operating window (recurring annually). Null on either side = open year-round.
+  seasonStartMonth Int?  // 1-12
+  seasonStartDay   Int?  // 1-31
+  seasonEndMonth   Int?  // 1-12
+  seasonEndDay     Int?  // 1-31
+
+  // Check-in/out times (24h "HH:mm")
+  checkInTime    String       @default("14:00")
+  checkOutTime   String       @default("11:00")
+
+  // Cancellation policy (v1: hardcoded defaults exposed as fields; v2 = custom policies).
+  cancelFullRefundDays    Int @default(14) // ≥ this many days before arrival → 100% refund
+  cancelPartialRefundDays Int @default(7)  // ≥ this many but < cancelFullRefundDays → partial refund
+  cancelPartialRefundPct  Int @default(50) // partial refund percent (0–100)
+  // Inside cancelPartialRefundDays → no refund
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  siteTypes      SiteType[]
+  sites          Site[]
+  ratePlans      RatePlan[]
+  guests         Guest[]
+  reservations   Reservation[]
+  addons         Addon[]
+  taxRates       TaxRate[]
+  closedDates    ClosedDateRange[]
+  emailTemplates EmailTemplate[]
+  emailLogs      EmailLog[]
+
+  @@index([organizationId])
+}
+
+// Operator-configured tax rates. A property can have several (state, county, city).
+model TaxRate {
+  id          String   @id @default(cuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  name        String   // "WI State Sales Tax", "Door County Room Tax", etc.
+  basisPoints Int      // 500 = 5.00%
+  appliesTo   String   @default("STAY") // "STAY" | "ADDON" | "ALL" — string for v1 flexibility
+  active      Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([propertyId])
+}
+
+// One-off closures (holiday, maintenance) on top of the recurring season window.
+model ClosedDateRange {
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  startDate  DateTime @db.Date
+  endDate    DateTime @db.Date
+  reason     String?
+
+  createdAt  DateTime @default(now())
+
+  @@index([propertyId, startDate, endDate])
+}
+
+// =============================================================================
+// INVENTORY: Site Types and Sites
+// =============================================================================
+
+model SiteType {
+  id            String    @id @default(cuid())
+  propertyId    String
+  property      Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  name          String    // "Wooded Electric Site"
+  description   String?
+
+  // Specs / amenities
+  electricAmps  Int?      // 30, 50, etc. null = no electric
+  hasWater      Boolean   @default(false)
+  hasSewer      Boolean   @default(false)
+  maxRvLengthFt Int?
+  maxAdults     Int?
+  maxChildren   Int?
+  petsAllowed   Boolean   @default(true)
+  tentsAllowed  Boolean   @default(false)
+
+  // Soft delete: preserves historical reservations referencing this type
+  deletedAt     DateTime?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sites         Site[]
+  ratePlans     RatePlan[]
+
+  @@index([propertyId])
+}
+
+model Site {
+  id         String    @id @default(cuid())
+  propertyId String
+  property   Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  siteTypeId String
+  siteType   SiteType  @relation(fields: [siteTypeId], references: [id])
+
+  label      String    // "1", "12", "A1", "B7", etc.
+  notes      String?   // operator-only
+
+  // Map coordinates (forward-compat for v2 interactive map; unused in v1 UI)
+  mapX       Float?
+  mapY       Float?
+
+  active     Boolean   @default(true)  // operator can take a site offline temporarily
+  deletedAt  DateTime?                 // soft delete
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  reservations Reservation[]
+
+  @@unique([propertyId, label])
+  @@index([propertyId])
+  @@index([siteTypeId])
+}
+
+// =============================================================================
+// PRICING: Rate Plans
+// =============================================================================
+// Engine logic (in code, not schema):
+//   Given (siteType, dateRange) → filter plans where
+//     stayLength ∈ [minStayDays, maxStayDays] AND active AND in date window
+//   → pick highest priority. Compute total = pricePerUnitCents × number_of_units.
+// =============================================================================
+
+model RatePlan {
+  id                String     @id @default(cuid())
+  propertyId        String
+  property          Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  // Optional scope to a specific site type. Null = applies to all site types.
+  siteTypeId        String?
+  siteType          SiteType?  @relation(fields: [siteTypeId], references: [id])
+
+  name              String     // "Nightly", "Weekly", "Monthly", "Annual Seasonal"
+  chargeUnit        ChargeUnit
+  pricePerUnitCents Int
+
+  minStayDays       Int        @default(1)
+  maxStayDays       Int?       // null = no upper bound
+
+  // Optional date-range applicability (for seasonal modifiers in v2)
+  effectiveFrom     DateTime?  @db.Date
+  effectiveTo       DateTime?  @db.Date
+
+  // Higher number wins ties on stay-length match
+  priority          Int        @default(0)
+
+  active            Boolean    @default(true)
+
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([propertyId])
+  @@index([siteTypeId])
+}
+
+// =============================================================================
+// GUEST: customer (anonymous checkout OR saved profile)
+// =============================================================================
+
+model Guest {
+  id               String    @id @default(cuid())
+  propertyId       String
+  property         Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  email            String
+  name             String
+  phone            String?
+
+  // RV / vehicle info
+  rvMake           String?
+  rvModel          String?
+  rvYear           Int?
+  rvLengthFt       Int?
+  licensePlate     String?
+
+  notes            String?   // operator-only
+
+  // Set when guest claims their profile via magic link to enable self-service
+  profileClaimedAt DateTime?
+
+  // Stripe customer (operator's connected account) for saved cards
+  stripeCustomerId String?
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  reservations     Reservation[]
+
+  @@unique([propertyId, email]) // one guest record per email per property
+  @@index([propertyId])
+}
+
+// Magic-link tokens for guest portal access and profile claiming
+model GuestMagicLink {
+  id         String    @id @default(cuid())
+  email      String
+  propertyId String    // scope token to a property
+  token      String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+
+  createdAt  DateTime  @default(now())
+
+  @@index([token])
+  @@index([email, propertyId])
+}
+
+// =============================================================================
+// RESERVATION: the core booking
+// =============================================================================
+
+model Reservation {
+  id               String            @id @default(cuid())
+  propertyId       String
+  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  siteId           String
+  site             Site              @relation(fields: [siteId], references: [id])
+  guestId          String
+  guest            Guest             @relation(fields: [guestId], references: [id])
+
+  // Public-facing short code (e.g., "MP-A8KQ2")
+  confirmationCode String            @unique
+
+  // Date-only (no time). Time-of-day comes from Property.checkInTime/checkOutTime.
+  // Half-open interval: [checkIn, checkOut) — checkout day is the day they leave.
+  checkIn          DateTime          @db.Date
+  checkOut         DateTime          @db.Date
+
+  stayType         StayType
+  status           ReservationStatus @default(DRAFT)
+
+  // Money totals (cents). Denormalized from line items for performance.
+  subtotalCents    Int               @default(0)
+  taxCents         Int               @default(0)
+  totalCents       Int               @default(0)
+  paidCents        Int               @default(0)
+  refundedCents    Int               @default(0)
+
+  // Snapshot of cancellation policy at booking time so policy changes
+  // don't retroactively affect existing reservations
+  cancelPolicySnapshot Json?
+
+  // Soft hold expiry while in HELD status during checkout
+  heldUntil        DateTime?
+
+  // Lifecycle timestamps
+  confirmedAt      DateTime?
+  checkedInAt      DateTime?
+  checkedOutAt     DateTime?
+  cancelledAt      DateTime?
+  cancellationReason String?
+
+  // If created by an operator (manual booking), track who
+  createdByOperatorId String?
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  lineItems        ReservationLineItem[]
+  payments         Payment[]
+  emailLogs        EmailLog[]
+
+  @@index([propertyId, status])
+  @@index([siteId, checkIn, checkOut])
+  @@index([guestId])
+  @@index([confirmationCode])
+}
+
+model ReservationLineItem {
+  id             String       @id @default(cuid())
+  reservationId  String
+  reservation    Reservation  @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  type           LineItemType
+  description    String       // "5 nights @ Wooded Electric Site", "Firewood Bundle", etc.
+  quantity       Int          @default(1)
+  unitPriceCents Int          // can be negative (discounts)
+  amountCents    Int          // quantity * unitPriceCents (denormalized for reporting)
+
+  // Optional refs back to source entities
+  ratePlanId     String?
+  addonId        String?
+  taxRateId      String?
+
+  createdAt      DateTime     @default(now())
+
+  @@index([reservationId])
+}
+
+// =============================================================================
+// ADD-ONS: firewood bundle, ice, propane refill, etc.
+// =============================================================================
+
+model Addon {
+  id             String   @id @default(cuid())
+  propertyId     String
+  property       Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  name           String
+  description    String?
+  priceCents     Int
+
+  // Optional: null = unlimited inventory
+  inventoryCount Int?
+
+  active         Boolean  @default(true)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([propertyId])
+}
+
+// =============================================================================
+// PAYMENTS: Stripe Connect charges
+// =============================================================================
+
+model Payment {
+  id                       String        @id @default(cuid())
+  reservationId            String
+  reservation              Reservation   @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  // Stripe references — charges routed through operator's connected account
+  stripePaymentIntentId    String?       @unique
+  stripeChargeId           String?
+  stripeConnectedAccountId String        // operator's Stripe Connect account
+
+  amountCents              Int
+  applicationFeeCents      Int           @default(0)  // platform's cut (org.platformFeeBasisPoints applied)
+  currency                 String        @default("USD")
+
+  status                   PaymentStatus @default(PENDING)
+  refundedAmountCents      Int           @default(0)
+
+  // Method snapshot for operator dashboard display
+  paymentMethodBrand       String?       // "visa", "amex"
+  paymentMethodLast4       String?
+
+  failureMessage           String?
+
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+
+  @@index([reservationId])
+  @@index([stripePaymentIntentId])
+}
+
+// =============================================================================
+// EMAIL: Templates and Audit Log
+// =============================================================================
+
+model EmailTemplate {
+  id         String            @id @default(cuid())
+  propertyId String
+  property   Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  type       EmailTemplateType
+  subject    String
+  bodyHtml   String            @db.Text
+  bodyText   String            @db.Text
+
+  active     Boolean           @default(true)
+
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@unique([propertyId, type]) // one override per type per property; otherwise system default
+  @@index([propertyId])
+}
+
+model EmailLog {
+  id                String            @id @default(cuid())
+  propertyId        String
+  property          Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  reservationId     String?
+  reservation       Reservation?      @relation(fields: [reservationId], references: [id])
+
+  type              EmailTemplateType
+  toEmail           String
+  subject           String
+  status            EmailStatus       @default(QUEUED)
+
+  // Resend message ID for tracking
+  providerMessageId String?
+  errorMessage      String?
+
+  sentAt            DateTime?
+  createdAt         DateTime          @default(now())
+
+  @@index([propertyId])
+  @@index([reservationId])
+}
