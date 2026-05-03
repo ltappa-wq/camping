@@ -1,9 +1,6 @@
 -- =============================================================================
 -- Reservation overlap prevention (CRITICAL for booking integrity)
 -- =============================================================================
--- Run this AFTER `prisma migrate dev` creates the Reservation table.
--- Place in: prisma/migrations/<timestamp>_reservation_exclusion/migration.sql
---
 -- Why: Application-level overlap checks have race conditions during concurrent
 -- checkouts. A guest paying at the same moment as an operator creates a manual
 -- booking can result in two CONFIRMED reservations on the same site for
