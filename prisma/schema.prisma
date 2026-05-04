@@ -86,6 +86,16 @@ enum EmailStatus {
   FAILED
 }
 
+enum RateModifierType {
+  PERCENT
+  FIXED_AMOUNT
+}
+
+enum RateModifierApplies {
+  DAY_OF_WEEK
+  DATE_RANGE
+}
+
 // =============================================================================
 // PLATFORM TIER: Organization, OperatorUser, Invite
 // =============================================================================
@@ -176,6 +186,14 @@ model Property {
   logoUrl        String?
   primaryColor   String?      // hex; optional
 
+  // Campground map image (uploaded to Supabase Storage; public URL)
+  mapImageUrl    String?
+
+  // Public-facing long-form content
+  description    String?      @db.Text
+  rulesText      String?      @db.Text
+  directionsText String?      @db.Text
+
   currency       String       @default("USD")
 
   // Seasonal operating window (recurring annually). Null on either side = open year-round.
@@ -200,6 +218,7 @@ model Property {
   siteTypes      SiteType[]
   sites          Site[]
   ratePlans      RatePlan[]
+  rateModifiers  RateModifier[]
   guests         Guest[]
   reservations   Reservation[]
   addons         Addon[]
@@ -273,6 +292,7 @@ model SiteType {
 
   sites         Site[]
   ratePlans     RatePlan[]
+  rateModifiers RateModifier[]
 
   @@index([propertyId])
 }
@@ -286,6 +306,9 @@ model Site {
 
   label      String    // "1", "12", "A1", "B7", etc.
   notes      String?   // operator-only
+
+  // Operator-defined tags (e.g., "shaded", "back-in", "ADA"). Free-form.
+  tags       String[]  @default([])
 
   // Map coordinates (forward-compat for v2 interactive map; unused in v1 UI)
   mapX       Float?
@@ -340,6 +363,35 @@ model RatePlan {
 
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
+
+  @@index([propertyId])
+  @@index([siteTypeId])
+}
+
+// Surcharges and discounts that stack additively at price-compute time.
+// Stacking validation is intentionally out of schema; pricing engine handles it.
+model RateModifier {
+  id            String              @id @default(cuid())
+  propertyId    String
+  property      Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  siteTypeId    String?
+  siteType      SiteType?           @relation(fields: [siteTypeId], references: [id])
+
+  name          String
+  modifierType  RateModifierType
+  // basis points if PERCENT (can be negative for discounts), cents if FIXED_AMOUNT (can be negative)
+  modifierValue Int
+
+  appliesTo     RateModifierApplies
+  daysOfWeek    Int[]               @default([])  // 0=Sun..6=Sat, used when DAY_OF_WEEK
+  startDate     DateTime?           @db.Date       // used when DATE_RANGE
+  endDate       DateTime?           @db.Date       // used when DATE_RANGE
+
+  priority      Int                 @default(0)
+  active        Boolean             @default(true)
+
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
 
   @@index([propertyId])
   @@index([siteTypeId])
