@@ -72,6 +72,11 @@ The dev/test seed represents Monument Point Camping (Door County, WI):
 - Default cancellation policy: 14 days / 7 days / 50%
 - No tax rates seeded — operator configures during property setup
 
+## Manual setup steps (not in migrations)
+
+- **Supabase Storage `property-maps` bucket**: Public-read bucket for campground map images. Created idempotently by `pnpm setup:storage` (script at `scripts/setup-supabase-storage.ts`). Requires `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`. Re-run is safe.
+- **Postgres `btree_gist` extension + reservation exclusion constraint**: applied via the `reservation_exclusion` raw SQL migration (already in `prisma/migrations/`).
+
 ## Conventions
 
 - All money is `Int` cents. Format at the UI layer only.
