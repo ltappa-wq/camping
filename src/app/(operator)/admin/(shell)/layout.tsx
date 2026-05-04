@@ -5,6 +5,7 @@ import { getSetupGap } from "@/lib/setup-status";
 import { AppSidebar } from "@/components/admin/app-sidebar";
 import { AdminTopbar } from "@/components/admin/admin-topbar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/toaster";
 
 export default async function AdminShellLayout({
   children,
@@ -32,6 +33,7 @@ export default async function AdminShellLayout({
         />
         <main className="flex-1 p-6">{children}</main>
       </SidebarInset>
+      <Toaster />
     </SidebarProvider>
   );
 }
