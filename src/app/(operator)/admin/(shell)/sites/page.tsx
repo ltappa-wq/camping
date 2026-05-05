@@ -7,7 +7,6 @@ export default async function SitesPage() {
 
   const [sites, siteTypes] = await Promise.all([
     ctx.prisma.site.findMany({
-      orderBy: [{ deletedAt: "asc" }, { active: "desc" }, { label: "asc" }],
       include: { siteType: { select: { name: true } } },
     }),
     ctx.prisma.siteType.findMany({
@@ -15,6 +14,16 @@ export default async function SitesPage() {
       select: { id: true, name: true, deletedAt: true },
     }),
   ]);
+
+  // Natural-sort labels so "2" < "10" < "A1" < "A10".
+  // Group order: active → inactive → archived; sort by label within each group.
+  const labelCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  sites.sort((a, b) => {
+    const aGroup = a.deletedAt ? 2 : a.active ? 0 : 1;
+    const bGroup = b.deletedAt ? 2 : b.active ? 0 : 1;
+    if (aGroup !== bGroup) return aGroup - bGroup;
+    return labelCollator.compare(a.label, b.label);
+  });
 
   return (
     <div>
