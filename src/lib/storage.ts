@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 // Server-only Supabase client. Uses the service-role key, which bypasses RLS,
 // so this MUST NEVER be imported from a client component or shipped to the
@@ -9,15 +9,19 @@ if (typeof window !== "undefined") {
   throw new Error("src/lib/storage.ts must not be imported in client code");
 }
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let _client: SupabaseClient | null = null;
 
-if (!SUPABASE_URL) throw new Error("NEXT_PUBLIC_SUPABASE_URL is not set");
-if (!SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
-
-export const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+function getSupabaseAdmin(): SupabaseClient {
+  if (_client) return _client;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url) throw new Error("NEXT_PUBLIC_SUPABASE_URL is not set");
+  if (!key) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
+  _client = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return _client;
+}
 
 export const PROPERTY_MAPS_BUCKET = "property-maps";
 
@@ -55,7 +59,8 @@ export async function uploadPropertyMap(
   const safeName = upload.filename.replace(/[^a-zA-Z0-9._-]+/g, "_");
   const path = `${upload.propertyId}/${Date.now()}-${safeName}`;
 
-  const { error } = await supabaseAdmin.storage
+  const client = getSupabaseAdmin();
+  const { error } = await client.storage
     .from(PROPERTY_MAPS_BUCKET)
     .upload(path, data, {
       contentType: upload.contentType,
@@ -66,7 +71,7 @@ export async function uploadPropertyMap(
     throw new Error(`Storage upload failed: ${error.message}`);
   }
 
-  const { data: pub } = supabaseAdmin.storage
+  const { data: pub } = client.storage
     .from(PROPERTY_MAPS_BUCKET)
     .getPublicUrl(path);
 
@@ -83,5 +88,5 @@ export async function deletePropertyMapByUrl(publicUrl: string): Promise<void> {
   if (idx === -1) return;
   const path = publicUrl.slice(idx + marker.length);
   if (!path) return;
-  await supabaseAdmin.storage.from(PROPERTY_MAPS_BUCKET).remove([path]);
+  await getSupabaseAdmin().storage.from(PROPERTY_MAPS_BUCKET).remove([path]);
 }
