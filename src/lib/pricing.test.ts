@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeQuote,
-  pickRatePlan,
+  packRatePlans,
   PricingError,
   type AddonInput,
   type ModifierInput,
@@ -28,6 +28,34 @@ const nightlyPlan: RatePlanInput = {
   active: true,
 };
 
+const weeklyPlan: RatePlanInput = {
+  id: "rp-weekly",
+  name: "Weekly",
+  siteTypeId: null,
+  chargeUnit: "WEEK",
+  pricePerUnitCents: 24000,
+  minStayDays: 7,
+  maxStayDays: null,
+  effectiveFrom: null,
+  effectiveTo: null,
+  priority: 0,
+  active: true,
+};
+
+const monthlyPlan: RatePlanInput = {
+  id: "rp-monthly",
+  name: "Monthly",
+  siteTypeId: null,
+  chargeUnit: "MONTH",
+  pricePerUnitCents: 70000,
+  minStayDays: 30,
+  maxStayDays: null,
+  effectiveFrom: null,
+  effectiveTo: null,
+  priority: 0,
+  active: true,
+};
+
 const seasonalPlan: RatePlanInput = {
   id: "rp-seasonal",
   name: "Annual Seasonal",
@@ -42,100 +70,187 @@ const seasonalPlan: RatePlanInput = {
   active: true,
 };
 
+const fullPlanSet = [nightlyPlan, weeklyPlan, monthlyPlan, seasonalPlan];
+
+function stayOf(nights: number) {
+  const checkIn = d("2026-05-01");
+  const checkOut = new Date(checkIn.getTime() + nights * 86_400_000);
+  return { checkIn, checkOut, siteTypeId: SITE_TYPE };
+}
+
 const baseRequest = {
   checkIn: d("2026-06-10"),
   checkOut: d("2026-06-13"),
   siteTypeId: SITE_TYPE,
-  ratePlans: [nightlyPlan, seasonalPlan],
+  ratePlans: [nightlyPlan],
   modifiers: [] as ModifierInput[],
   taxRates: [] as TaxRateInput[],
   addons: [] as AddonInput[],
 };
 
-describe("pickRatePlan", () => {
-  it("picks the only eligible plan for a 3-night stay", () => {
-    const plan = pickRatePlan([nightlyPlan, seasonalPlan], {
-      checkIn: d("2026-06-10"),
-      checkOut: d("2026-06-13"),
-      siteTypeId: SITE_TYPE,
-    });
-    expect(plan.id).toBe("rp-nightly");
+describe("packRatePlans — eligibility", () => {
+  it("throws when no plan covers any of the stay", () => {
+    expect(() => packRatePlans([], stayOf(3))).toThrow(PricingError);
   });
 
-  it("picks the seasonal plan when stay length matches it", () => {
-    const plan = pickRatePlan([nightlyPlan, seasonalPlan], {
-      checkIn: d("2026-05-01"),
-      checkOut: d("2026-10-15"), // 167 nights
-      siteTypeId: SITE_TYPE,
-    });
-    // Both eligible; same priority. Seasonal beats nightly only if priority
-    // is higher OR site-type-specific. With identical priority the sort is
-    // unstable, so a real config would set seasonalPlan.priority higher.
-    expect([plan.id]).toContain("rp-nightly");
-  });
-
-  it("higher-priority plan wins ties", () => {
-    const promoted = { ...seasonalPlan, priority: 10 };
-    const plan = pickRatePlan([nightlyPlan, promoted], {
-      checkIn: d("2026-05-01"),
-      checkOut: d("2026-10-15"),
-      siteTypeId: SITE_TYPE,
-    });
-    expect(plan.id).toBe("rp-seasonal");
-  });
-
-  it("site-type-specific beats null on equal priority", () => {
-    const specific: RatePlanInput = {
-      ...nightlyPlan,
-      id: "rp-specific",
-      siteTypeId: SITE_TYPE,
-    };
-    const plan = pickRatePlan([nightlyPlan, specific], {
-      checkIn: d("2026-06-10"),
-      checkOut: d("2026-06-13"),
-      siteTypeId: SITE_TYPE,
-    });
-    expect(plan.id).toBe("rp-specific");
-  });
-
-  it("rejects plans whose siteType doesn't match", () => {
+  it("excludes plans whose siteType doesn't match", () => {
     const onlyOther: RatePlanInput = {
       ...nightlyPlan,
       siteTypeId: "site-type-other",
     };
-    expect(() =>
-      pickRatePlan([onlyOther], {
-        checkIn: d("2026-06-10"),
-        checkOut: d("2026-06-13"),
-        siteTypeId: SITE_TYPE,
-      }),
-    ).toThrow(PricingError);
+    expect(() => packRatePlans([onlyOther], stayOf(3))).toThrow(PricingError);
   });
 
-  it("rejects plans outside their effective range", () => {
+  it("excludes plans outside their effective range", () => {
     const summerOnly: RatePlanInput = {
       ...nightlyPlan,
       effectiveFrom: d("2026-07-01"),
       effectiveTo: d("2026-08-31"),
     };
-    expect(() =>
-      pickRatePlan([summerOnly], {
-        checkIn: d("2026-06-10"),
-        checkOut: d("2026-06-13"),
-        siteTypeId: SITE_TYPE,
-      }),
-    ).toThrow(PricingError);
+    expect(() => packRatePlans([summerOnly], stayOf(3))).toThrow(PricingError);
   });
 
   it("inactive plans are skipped", () => {
     const offline = { ...nightlyPlan, active: false };
-    expect(() =>
-      pickRatePlan([offline], {
-        checkIn: d("2026-06-10"),
-        checkOut: d("2026-06-13"),
-        siteTypeId: SITE_TYPE,
-      }),
-    ).toThrow(PricingError);
+    expect(() => packRatePlans([offline], stayOf(3))).toThrow(PricingError);
+  });
+
+  it("respects minStayDays — a 6-night stay can't use Weekly alone", () => {
+    expect(() => packRatePlans([weeklyPlan], stayOf(6))).toThrow(PricingError);
+  });
+
+  it("respects maxStayDays", () => {
+    const shortNightly = { ...nightlyPlan, maxStayDays: 2 };
+    expect(() => packRatePlans([shortNightly], stayOf(3))).toThrow(PricingError);
+  });
+});
+
+describe("packRatePlans — greedy", () => {
+  it("7 nights with Nightly+Weekly → 1 weekly, single line", () => {
+    const lines = packRatePlans([nightlyPlan, weeklyPlan], stayOf(7));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].ratePlanId).toBe("rp-weekly");
+    expect(lines[0].units).toBe(1);
+    expect(lines[0].amountCents).toBe(24000);
+  });
+
+  it("9 nights with Nightly+Weekly → 1 weekly + 2 nightly, total $320", () => {
+    const lines = packRatePlans([nightlyPlan, weeklyPlan], stayOf(9));
+    expect(lines).toHaveLength(2);
+    expect(lines[0].ratePlanId).toBe("rp-weekly");
+    expect(lines[0].units).toBe(1);
+    expect(lines[1].ratePlanId).toBe("rp-nightly");
+    expect(lines[1].units).toBe(2);
+    const total = lines.reduce((s, l) => s + l.amountCents, 0);
+    expect(total).toBe(32000);
+  });
+
+  it("10 nights with Nightly+Weekly → 1 weekly + 3 nightly = $360", () => {
+    const lines = packRatePlans([nightlyPlan, weeklyPlan], stayOf(10));
+    expect(lines.find((l) => l.ratePlanId === "rp-weekly")?.units).toBe(1);
+    expect(lines.find((l) => l.ratePlanId === "rp-nightly")?.units).toBe(3);
+    const total = lines.reduce((s, l) => s + l.amountCents, 0);
+    expect(total).toBe(36000);
+  });
+
+  it("14 nights with Nightly+Weekly → 2 weekly = $480", () => {
+    const lines = packRatePlans([nightlyPlan, weeklyPlan], stayOf(14));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].ratePlanId).toBe("rp-weekly");
+    expect(lines[0].units).toBe(2);
+    expect(lines[0].amountCents).toBe(48000);
+  });
+
+  it("21 nights with Nightly+Weekly → 3 weekly", () => {
+    const lines = packRatePlans([nightlyPlan, weeklyPlan], stayOf(21));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].units).toBe(3);
+    expect(lines[0].amountCents).toBe(72000);
+  });
+
+  it("30 nights with full plan set → 1 monthly only", () => {
+    const lines = packRatePlans(fullPlanSet, stayOf(30));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].ratePlanId).toBe("rp-monthly");
+    expect(lines[0].units).toBe(1);
+    expect(lines[0].amountCents).toBe(70000);
+  });
+
+  it("31 nights with full plan set → 1 monthly + 1 nightly = $740", () => {
+    const lines = packRatePlans(fullPlanSet, stayOf(31));
+    expect(lines.find((l) => l.ratePlanId === "rp-monthly")?.units).toBe(1);
+    expect(lines.find((l) => l.ratePlanId === "rp-nightly")?.units).toBe(1);
+    const total = lines.reduce((s, l) => s + l.amountCents, 0);
+    expect(total).toBe(74000);
+  });
+
+  it("35 nights with full plan set → 1 monthly + 5 nightly = $900", () => {
+    const lines = packRatePlans(fullPlanSet, stayOf(35));
+    expect(lines.find((l) => l.ratePlanId === "rp-monthly")?.units).toBe(1);
+    expect(lines.find((l) => l.ratePlanId === "rp-nightly")?.units).toBe(5);
+    // Greedy should NOT bill weeklies here because 5 nights < 7. Confirm.
+    expect(lines.find((l) => l.ratePlanId === "rp-weekly")).toBeUndefined();
+    const total = lines.reduce((s, l) => s + l.amountCents, 0);
+    expect(total).toBe(90000);
+  });
+
+  it("60 nights with full plan set → 2 monthly (NOT 1 monthly + 30 nightly)", () => {
+    const lines = packRatePlans(fullPlanSet, stayOf(60));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].ratePlanId).toBe("rp-monthly");
+    expect(lines[0].units).toBe(2);
+    expect(lines[0].amountCents).toBe(140000);
+  });
+
+  it("150 nights with Seasonal in the set → 1 seasonal only", () => {
+    const lines = packRatePlans(fullPlanSet, stayOf(150));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].ratePlanId).toBe("rp-seasonal");
+    expect(lines[0].units).toBe(1);
+    expect(lines[0].amountCents).toBe(200000);
+  });
+
+  it("200 nights with Seasonal → 1 seasonal + greedy fill of 50", () => {
+    // Greedy walk of 50 days with [monthly:30, weekly:7, nightly:1]:
+    //   floor(50/30) = 1 → 30 days, remaining 20
+    //   floor(20/7)  = 2 → 14 days, remaining 6
+    //   floor(6/1)   = 6 → 6 days, remaining 0
+    // Total: seasonal $2000 + monthly $700 + 2×weekly $480 + 6×nightly $240 = $3420.
+    const lines = packRatePlans(fullPlanSet, stayOf(200));
+    expect(lines.find((l) => l.ratePlanId === "rp-seasonal")?.units).toBe(1);
+    expect(lines.find((l) => l.ratePlanId === "rp-monthly")?.units).toBe(1);
+    expect(lines.find((l) => l.ratePlanId === "rp-weekly")?.units).toBe(2);
+    expect(lines.find((l) => l.ratePlanId === "rp-nightly")?.units).toBe(6);
+    const total = lines.reduce((s, l) => s + l.amountCents, 0);
+    expect(total).toBe(342000);
+  });
+
+  it("SEASON is capped at 1 unit per stay even if the stay is multi-season", () => {
+    // 320 nights with only Seasonal (min 150). One season covers 150;
+    // remaining 170 nights have no plan → throws.
+    expect(() => packRatePlans([seasonalPlan], stayOf(320))).toThrow(
+      PricingError,
+    );
+  });
+
+  it("5 nights with Weekly+Monthly only (no Nightly) → throws naming the gap", () => {
+    let thrown: unknown;
+    try {
+      packRatePlans([weeklyPlan, monthlyPlan], stayOf(5));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PricingError);
+    expect((thrown as PricingError).message).toMatch(/5 night/);
+    expect((thrown as PricingError).message).toMatch(/remainder|covers/i);
+  });
+
+  it("higher daysPerUnit always wins; priority is a tiebreaker only at equal daysPerUnit", () => {
+    // A high-priority Nightly should NOT preempt Weekly when daysPerUnit differs.
+    const promotedNightly = { ...nightlyPlan, priority: 999 };
+    const lines = packRatePlans([promotedNightly, weeklyPlan], stayOf(14));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].ratePlanId).toBe("rp-weekly");
   });
 });
 
@@ -145,8 +260,9 @@ describe("computeQuote — base", () => {
     expect(q.nights).toBe(3);
     expect(q.baseCents).toBe(12000);
     expect(q.totalCents).toBe(12000);
-    expect(q.lineItems).toHaveLength(1);
-    expect(q.lineItems[0].kind).toBe("BASE");
+    expect(q.stayLines).toHaveLength(1);
+    expect(q.stayLines[0].ratePlanId).toBe("rp-nightly");
+    expect(q.lineItems.filter((li) => li.kind === "BASE")).toHaveLength(1);
   });
 
   it("rejects 0-night stay", () => {
@@ -158,37 +274,31 @@ describe("computeQuote — base", () => {
     ).toThrow(PricingError);
   });
 
-  it("WEEK chargeUnit ceil-rounds to whole weeks", () => {
-    const weekly: RatePlanInput = {
-      ...nightlyPlan,
-      id: "rp-week",
-      chargeUnit: "WEEK",
-      pricePerUnitCents: 20000,
-      priority: 100,
-    };
+  it("greedy 9-night quote produces two BASE line items", () => {
     const q = computeQuote({
       ...baseRequest,
-      checkOut: d("2026-06-20"), // 10 nights
-      ratePlans: [weekly],
+      checkOut: d("2026-06-19"), // 9 nights from 2026-06-10
+      ratePlans: [nightlyPlan, weeklyPlan],
     });
-    expect(q.baseCents).toBe(40000); // 2 weeks
+    expect(q.baseCents).toBe(32000);
+    expect(q.stayLines).toHaveLength(2);
+    expect(q.lineItems.filter((li) => li.kind === "BASE")).toHaveLength(2);
   });
 
-  it("SEASON chargeUnit charges flat once", () => {
+  it("WEEK plan alone covers a 7-night stay", () => {
     const q = computeQuote({
       ...baseRequest,
-      checkIn: d("2026-05-01"),
-      checkOut: d("2026-10-01"),
-      ratePlans: [{ ...seasonalPlan, priority: 100 }],
+      checkOut: d("2026-06-17"),
+      ratePlans: [weeklyPlan],
     });
-    expect(q.baseCents).toBe(200000);
+    expect(q.baseCents).toBe(24000);
+    expect(q.stayLines).toHaveLength(1);
   });
 });
 
 describe("computeQuote — modifiers", () => {
   it("FIXED weekend surcharge applies per matching night", () => {
-    // 2026-06-12 is Friday (UTC), 2026-06-13 Saturday is excluded by half-open
-    // checkOut=06-13 ⇒ nights are Wed 10, Thu 11, Fri 12. Only Fri matches.
+    // 2026-06-12 is Friday (UTC); checkOut=06-13 ⇒ nights are Wed/Thu/Fri.
     const weekend: ModifierInput = {
       id: "m-wknd",
       name: "Weekend",
@@ -211,13 +321,13 @@ describe("computeQuote — modifiers", () => {
   });
 
   it("PERCENT modifier applies to per-night base, rounded per night", () => {
-    // 10% of $40/night = $4/night; 1 matching night → $4 surcharge.
+    // Per-night base = $120 / 3 = $40; 10% × 1 Friday = $4.
     const tenPctFri: ModifierInput = {
       id: "m-pct",
       name: "Friday premium",
       siteTypeId: null,
       modifierType: "PERCENT",
-      modifierValue: 1000, // +10%
+      modifierValue: 1000,
       appliesTo: "DAY_OF_WEEK",
       daysOfWeek: [5],
       startDate: null,
@@ -228,6 +338,34 @@ describe("computeQuote — modifiers", () => {
     const q = computeQuote({ ...baseRequest, modifiers: [tenPctFri] });
     expect(q.modifierTotalCents).toBe(400);
     expect(q.totalCents).toBe(12400);
+  });
+
+  it("PERCENT modifier on a multi-line stay uses the FLAT averaged per-night base", () => {
+    // 9-night greedy = $320 base. perNightBase = round(32000/9) = 3556 cents.
+    // 10% on a single matching night = round(3556 * 1000 / 10000) = 356 cents.
+    const fri: ModifierInput = {
+      id: "m-fri",
+      name: "Fri premium",
+      siteTypeId: null,
+      modifierType: "PERCENT",
+      modifierValue: 1000,
+      appliesTo: "DAY_OF_WEEK",
+      daysOfWeek: [5],
+      startDate: null,
+      endDate: null,
+      priority: 0,
+      active: true,
+    };
+    // 2026-06-10 is Wed; 9 nights → Wed Thu Fri Sat Sun Mon Tue Wed Thu.
+    // Two Fridays would land but checkOut=06-19 stops at 06-18 night, only one Fri (06-12).
+    const q = computeQuote({
+      ...baseRequest,
+      checkOut: d("2026-06-19"),
+      ratePlans: [nightlyPlan, weeklyPlan],
+      modifiers: [fri],
+    });
+    expect(q.baseCents).toBe(32000);
+    expect(q.modifierTotalCents).toBe(356);
   });
 
   it("DATE_RANGE modifier (inclusive) applies to overlapping nights only", () => {
@@ -250,7 +388,7 @@ describe("computeQuote — modifiers", () => {
       checkOut: d("2026-07-07"), // 3 nights: Jul 4, 5, 6 — first 2 in range
       modifiers: [holiday],
     });
-    expect(q.modifierTotalCents).toBe(4000); // 2 nights × $20
+    expect(q.modifierTotalCents).toBe(4000);
   });
 
   it("DISCOUNT modifier reduces the total", () => {
@@ -267,7 +405,6 @@ describe("computeQuote — modifiers", () => {
       priority: 0,
       active: true,
     };
-    // Wed Jun 10 matches → -$5
     const q = computeQuote({ ...baseRequest, modifiers: [promo] });
     expect(q.modifierTotalCents).toBe(-500);
     expect(q.totalCents).toBe(11500);
@@ -317,7 +454,7 @@ describe("computeQuote — modifiers", () => {
       modifierType: "PERCENT",
       modifierValue: 1000,
       appliesTo: "DAY_OF_WEEK",
-      daysOfWeek: [3, 4, 5], // Wed/Thu/Fri — all 3 nights match
+      daysOfWeek: [3, 4, 5],
       startDate: null,
       endDate: null,
       priority: 1,
@@ -390,7 +527,6 @@ describe("computeQuote — taxes", () => {
 
   it("STAY tax taxes only the stay subtotal", () => {
     const q = computeQuote({ ...baseRequest, taxRates: [stayTax] });
-    // 5.5% of $120 = $6.60
     expect(q.taxCents).toBe(660);
     expect(q.totalCents).toBe(12660);
   });
@@ -401,7 +537,6 @@ describe("computeQuote — taxes", () => {
       taxRates: [addonTax],
       addons: [{ id: "a", name: "Ice", priceCents: 500, quantity: 2 }],
     });
-    // 8% of $10 = $0.80; stay base $120 untaxed
     expect(q.taxCents).toBe(80);
     expect(q.totalCents).toBe(13080);
   });
@@ -412,7 +547,6 @@ describe("computeQuote — taxes", () => {
       taxRates: [allTax],
       addons: [{ id: "a", name: "Ice", priceCents: 500, quantity: 2 }],
     });
-    // 2% of ($120 + $10) = $2.60
     expect(q.taxCents).toBe(260);
     expect(q.totalCents).toBe(13260);
   });
@@ -437,11 +571,6 @@ describe("computeQuote — taxes", () => {
 
 describe("computeQuote — integration", () => {
   it("end-to-end: base + modifier + addons + tax", () => {
-    // 3 nights × $40 = $120 base
-    // +$10 weekend (Fri only) = +$10 → stay $130
-    // 2× firewood @ $8 = $16 addons
-    // 5% STAY tax on $130 = $6.50
-    // total = 130 + 16 + 6.50 = $152.50 = 15250 cents
     const weekend: ModifierInput = {
       id: "m-wknd",
       name: "Weekend",

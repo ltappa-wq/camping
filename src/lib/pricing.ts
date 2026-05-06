@@ -88,10 +88,21 @@ export type LineItem = {
   taxRateId?: string;
 };
 
-export type Quote = {
-  nights: number;
+/** One slice of the greedy pack: which plan, how many of its units, total cost. */
+export type StayLine = {
   ratePlanId: string;
   ratePlanName: string;
+  chargeUnit: ChargeUnit;
+  daysPerUnit: number;
+  units: number;
+  unitPriceCents: number;
+  amountCents: number;
+};
+
+export type Quote = {
+  nights: number;
+  /** Greedy decomposition of the stay into rate-plan units. One entry per plan. */
+  stayLines: StayLine[];
   baseCents: number;
   modifierTotalCents: number;
   addonsCents: number;
@@ -107,50 +118,18 @@ export class PricingError extends Error {
   }
 }
 
-/** Pick the highest-priority rate plan applicable to the requested stay. */
-export function pickRatePlan(
-  plans: ReadonlyArray<RatePlanInput>,
-  request: { checkIn: Date; checkOut: Date; siteTypeId: string },
-): RatePlanInput {
-  const nights = nightsBetween(request.checkIn, request.checkOut);
-  const eligible = plans.filter((p) => {
-    if (!p.active) return false;
-    if (p.siteTypeId !== null && p.siteTypeId !== request.siteTypeId) return false;
-    if (nights < p.minStayDays) return false;
-    if (p.maxStayDays !== null && nights > p.maxStayDays) return false;
-    if (p.effectiveFrom !== null && request.checkIn < p.effectiveFrom) return false;
-    if (p.effectiveTo !== null) {
-      // effectiveTo is the inclusive last operating day; checkout = end+1 morning is allowed.
-      const exclusive = new Date(p.effectiveTo.getTime() + ONE_DAY_MS);
-      if (request.checkOut > exclusive) return false;
-    }
-    return true;
-  });
-
-  if (eligible.length === 0) {
-    throw new PricingError("No applicable rate plan for this stay");
-  }
-
-  // Highest priority first. Tiebreaker: site-type-specific beats null (all-types).
-  eligible.sort((a, b) => {
-    if (b.priority !== a.priority) return b.priority - a.priority;
-    const aSpec = a.siteTypeId === null ? 0 : 1;
-    const bSpec = b.siteTypeId === null ? 0 : 1;
-    return bSpec - aSpec;
-  });
-  return eligible[0];
-}
-
-function computeBaseCents(plan: RatePlanInput, nights: number): number {
+function daysPerUnitFor(plan: RatePlanInput): number {
   switch (plan.chargeUnit) {
     case "NIGHT":
-      return plan.pricePerUnitCents * nights;
+      return 1;
     case "WEEK":
-      return plan.pricePerUnitCents * Math.ceil(nights / 7);
+      return 7;
+    // Stay-aligned, NOT calendar-aligned. Deliberate MVP choice.
     case "MONTH":
-      return plan.pricePerUnitCents * Math.ceil(nights / 30);
+      return 30;
+    // SEASON's "unit" is the plan's own minStayDays — i.e. one season worth.
     case "SEASON":
-      return plan.pricePerUnitCents;
+      return plan.minStayDays;
   }
 }
 
@@ -165,6 +144,87 @@ function chargeUnitLabel(unit: ChargeUnit): string {
     case "SEASON":
       return "season";
   }
+}
+
+/** Filter the plans the caller passed in down to those eligible for this stay. */
+function eligiblePlans(
+  plans: ReadonlyArray<RatePlanInput>,
+  request: { checkIn: Date; checkOut: Date; siteTypeId: string },
+): RatePlanInput[] {
+  const nights = nightsBetween(request.checkIn, request.checkOut);
+  return plans.filter((p) => {
+    if (!p.active) return false;
+    if (p.siteTypeId !== null && p.siteTypeId !== request.siteTypeId) return false;
+    if (nights < p.minStayDays) return false;
+    if (p.maxStayDays !== null && nights > p.maxStayDays) return false;
+    if (p.effectiveFrom !== null && request.checkIn < p.effectiveFrom) return false;
+    if (p.effectiveTo !== null) {
+      const exclusive = new Date(p.effectiveTo.getTime() + ONE_DAY_MS);
+      if (request.checkOut > exclusive) return false;
+    }
+    return true;
+  });
+}
+
+/**
+ * Greedy unit-packer: decompose the stay into the largest rate-plan units
+ * that fit, then fill the remainder with smaller units.
+ *
+ * Pack order: daysPerUnit DESC, then priority DESC, then plan id ASC for
+ * deterministic ties. SEASON plans are clamped to at most one unit per
+ * stay (booking two seasons in one reservation is meaningless).
+ *
+ * Throws PricingError if any nights are left unaccounted for after walking
+ * all plans — the message names the gap so the operator knows what to add.
+ */
+export function packRatePlans(
+  plans: ReadonlyArray<RatePlanInput>,
+  request: { checkIn: Date; checkOut: Date; siteTypeId: string },
+): StayLine[] {
+  const nights = nightsBetween(request.checkIn, request.checkOut);
+  if (nights <= 0) {
+    throw new PricingError("Stay must be at least one night");
+  }
+
+  const eligible = eligiblePlans(plans, request).slice();
+
+  eligible.sort((a, b) => {
+    const da = daysPerUnitFor(a);
+    const db = daysPerUnitFor(b);
+    if (db !== da) return db - da;
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return a.id.localeCompare(b.id);
+  });
+
+  const lines: StayLine[] = [];
+  let remaining = nights;
+  for (const plan of eligible) {
+    if (remaining === 0) break;
+    const dpu = daysPerUnitFor(plan);
+    if (dpu <= 0) continue;
+    let units = Math.floor(remaining / dpu);
+    if (plan.chargeUnit === "SEASON" && units > 1) units = 1;
+    if (units === 0) continue;
+    const amount = plan.pricePerUnitCents * units;
+    lines.push({
+      ratePlanId: plan.id,
+      ratePlanName: plan.name,
+      chargeUnit: plan.chargeUnit,
+      daysPerUnit: dpu,
+      units,
+      unitPriceCents: plan.pricePerUnitCents,
+      amountCents: amount,
+    });
+    remaining -= units * dpu;
+  }
+
+  if (remaining > 0) {
+    throw new PricingError(
+      `${remaining} night${remaining === 1 ? "" : "s"} of the stay could not be priced — no applicable plan covers this remainder.`,
+    );
+  }
+
+  return lines;
 }
 
 /** All UTC midnight Dates in the half-open range [checkIn, checkOut). */
@@ -220,18 +280,23 @@ export function computeQuote(request: QuoteRequest): Quote {
     throw new PricingError("Stay must be at least one night");
   }
 
-  const plan = pickRatePlan(request.ratePlans, request);
-  const baseCents = computeBaseCents(plan, nights);
+  const stayLines = packRatePlans(request.ratePlans, request);
+  const baseCents = stayLines.reduce((sum, sl) => sum + sl.amountCents, 0);
+
+  // Decision: per-night base used for PERCENT modifiers is a FLAT AVERAGE
+  // (baseCents / nights), regardless of which packing unit covers each
+  // night. Modifier math stays predictable for operators — a 10% Friday
+  // surcharge on a stay packed as 1×Weekly+2×Nightly applies the same
+  // amount on every Friday night, not different amounts based on which
+  // unit "owns" that night.
   const perNightBaseCents = Math.round(baseCents / nights);
 
-  const lineItems: LineItem[] = [
-    {
-      kind: "BASE",
-      description: `${plan.name} — ${chargeUnitLabel(plan.chargeUnit)} rate`,
-      amountCents: baseCents,
-      ratePlanId: plan.id,
-    },
-  ];
+  const lineItems: LineItem[] = stayLines.map((sl) => ({
+    kind: "BASE",
+    description: `${sl.ratePlanName} — ${chargeUnitLabel(sl.chargeUnit)} rate × ${sl.units}`,
+    amountCents: sl.amountCents,
+    ratePlanId: sl.ratePlanId,
+  }));
 
   const stayNights = eachNight(request.checkIn, request.checkOut);
 
@@ -300,8 +365,7 @@ export function computeQuote(request: QuoteRequest): Quote {
 
   return {
     nights,
-    ratePlanId: plan.id,
-    ratePlanName: plan.name,
+    stayLines,
     baseCents,
     modifierTotalCents,
     addonsCents,
