@@ -340,6 +340,8 @@ export async function startCheckout(
       reservationId: reservation.id,
       propertyId: property.id,
       slug: input.slug,
+      stripeAccountId: property.organization.stripeAccountId,
+      applicationFeeCents: String(fee > 0 ? fee : 0),
     },
     success_url: `${baseUrl}/p/${input.slug}/confirmation/${reservation.id}?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/p/${input.slug}/checkout?siteId=${input.siteId}&from=${input.from}&to=${input.to}&adults=${adults}&children=${children}`,
