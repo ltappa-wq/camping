@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Building2,
+  Calculator,
   Layers,
   TentTree,
   Tag,
@@ -33,6 +34,7 @@ const NAV_ITEMS = [
   { href: "/admin/modifiers", label: "Modifiers", icon: Sparkles },
   { href: "/admin/addons", label: "Add-ons", icon: ShoppingBag },
   { href: "/admin/tax-rates", label: "Tax Rates", icon: Receipt },
+  { href: "/admin/quote-tester", label: "Quote Tester", icon: Calculator },
 ] as const;
 
 export function AppSidebar({ propertyName }: { propertyName: string }) {
