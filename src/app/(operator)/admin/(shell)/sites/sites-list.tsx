@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { MoreHorizontal, Plus } from "lucide-react";
+import { Layers, MoreHorizontal, Plus } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ import {
   restoreSite,
   toggleSiteActive,
 } from "./actions";
+import { BulkSiteForm } from "./bulk-site-form";
 import { SiteForm, type SiteTypeOption } from "./site-form";
 import { formatTags, type SiteFormValues } from "./schema";
 
@@ -65,6 +66,7 @@ export function SitesList({
 }) {
   const firstActiveType = siteTypes.find((t) => !t.archived)?.id ?? "";
   const [open, setOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [editing, setEditing] = useState<SiteFormValues>(
     EMPTY(firstActiveType),
   );
@@ -139,7 +141,14 @@ export function SitesList({
 
   return (
     <>
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex justify-end gap-2">
+        <Button
+          variant="outline"
+          onClick={() => setBulkOpen(true)}
+          disabled={!firstActiveType}
+        >
+          <Layers className="mr-1 h-4 w-4" /> Bulk create
+        </Button>
         <Button onClick={openCreate} disabled={!firstActiveType}>
           <Plus className="mr-1 h-4 w-4" /> New site
         </Button>
@@ -250,6 +259,23 @@ export function SitesList({
             siteTypes={siteTypes}
             onSaved={() => setOpen(false)}
             onCancel={() => setOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Bulk create sites</DialogTitle>
+            <DialogDescription>
+              Create up to 100 sites at once with sequential labels. Tags
+              apply to every site.
+            </DialogDescription>
+          </DialogHeader>
+          <BulkSiteForm
+            siteTypes={siteTypes}
+            onSaved={() => setBulkOpen(false)}
+            onCancel={() => setBulkOpen(false)}
           />
         </DialogContent>
       </Dialog>
