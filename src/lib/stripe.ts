@@ -1,13 +1,21 @@
 import Stripe from "stripe";
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  throw new Error("STRIPE_SECRET_KEY is not set");
-}
+// Lazy-init: rendering a page that transitively imports this module shouldn't
+// crash just because STRIPE_SECRET_KEY hasn't been set. The same clear error
+// fires the moment any caller actually touches the client.
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2025-02-24.acacia",
-  typescript: true,
-});
+let _stripe: Stripe | null = null;
+
+export function getStripe(): Stripe {
+  if (_stripe) return _stripe;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY is not set");
+  _stripe = new Stripe(key, {
+    apiVersion: "2025-02-24.acacia",
+    typescript: true,
+  });
+  return _stripe;
+}
 
 /**
  * Create a Stripe Connect (Express) account and onboarding link for an
@@ -23,6 +31,7 @@ export async function createConnectOnboardingLink(params: {
   returnUrl: string;
   refreshUrl: string;
 }) {
+  const stripe = getStripe();
   const account = params.existingAccountId
     ? await stripe.accounts.retrieve(params.existingAccountId)
     : await stripe.accounts.create({
