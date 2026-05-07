@@ -108,6 +108,16 @@ model Organization {
   // Phase 3: switched from percentage (basis points) to a flat fee.
   platformFeeFlatCents     Int      @default(300)
 
+  // false → operator absorbs the fee (charged to operator via Stripe
+  //         application_fee_amount; customer pays the booking total).
+  // true  → customer pays the fee on top of the booking total. The fee is
+  //         added as a FEE-typed ReservationLineItem so the breakdown is
+  //         transparent at checkout, in the email, and in the operator
+  //         dashboard. application_fee_amount is unchanged either way.
+  // Existing reservations carry the snapshot in their line items, so
+  // toggling this only affects future bookings.
+  customerPaysPlatformFee  Boolean  @default(false)
+
   // Stripe Connect (Express)
   stripeAccountId          String?  @unique
   stripeOnboardingComplete Boolean  @default(false)
