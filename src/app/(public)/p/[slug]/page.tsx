@@ -1,6 +1,9 @@
 import { PublicHeader } from "./_components/public-header";
 import { SearchForm } from "./_components/search-form";
-import { getPropertyBySlug } from "./_lib/property";
+import {
+  getPropertyWithOrgBySlug,
+  isAcceptingBookings,
+} from "./_lib/property";
 
 export default async function PropertyLandingPage({
   params,
@@ -8,7 +11,8 @@ export default async function PropertyLandingPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const property = await getPropertyBySlug(slug);
+  const property = await getPropertyWithOrgBySlug(slug);
+  const accepting = isAcceptingBookings(property.organization);
 
   return (
     <>
@@ -37,7 +41,14 @@ export default async function PropertyLandingPage({
             Check-in {property.checkInTime} · Check-out {property.checkOutTime}
           </p>
           <div className="mt-4">
-            <SearchForm slug={property.slug} />
+            {accepting ? (
+              <SearchForm slug={property.slug} />
+            ) : (
+              <p className="rounded-md border bg-muted/40 p-4 text-sm text-muted-foreground">
+                Online bookings coming soon. Please contact us directly to
+                reserve a site.
+              </p>
+            )}
           </div>
         </section>
 

@@ -12,6 +12,7 @@ import {
   ShoppingBag,
   Receipt,
   Wand2,
+  Banknote,
 } from "lucide-react";
 
 import {
@@ -33,6 +34,7 @@ const NAV_ITEMS = [
   { href: "/admin/rate-plans", label: "Rate Plans", icon: Tag },
   { href: "/admin/modifiers", label: "Modifiers", icon: Sparkles },
   { href: "/admin/addons", label: "Add-ons", icon: ShoppingBag },
+  { href: "/admin/payouts", label: "Payouts", icon: Banknote },
   { href: "/admin/tax-rates", label: "Tax Rates", icon: Receipt },
   { href: "/admin/quote-tester", label: "Quote Tester", icon: Calculator },
 ] as const;

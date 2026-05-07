@@ -44,6 +44,10 @@ export async function POST(req: Request) {
         await handleCheckoutExpired(event.data.object);
         break;
       }
+      case "account.updated": {
+        await handleAccountUpdated(event.data.object);
+        break;
+      }
       default:
         // Other events are acked but not acted on for now.
         break;
@@ -215,6 +219,33 @@ async function handleCheckoutExpired(
       cancelledAt: new Date(),
       cancellationReason: "Checkout session expired",
       heldUntil: null,
+    },
+  });
+}
+
+async function handleAccountUpdated(account: Stripe.Account): Promise<void> {
+  // Look up by Connect account id; the same Stripe webhook endpoint receives
+  // events for all connected accounts on the platform.
+  const org = await prisma.organization.findUnique({
+    where: { stripeAccountId: account.id },
+    select: { id: true },
+  });
+  if (!org) {
+    // Account wasn't created by us, or row was deleted. Ack and move on.
+    return;
+  }
+
+  const chargesEnabled = account.charges_enabled === true;
+  const payoutsEnabled = account.payouts_enabled === true;
+  const detailsSubmitted = account.details_submitted === true;
+
+  await prisma.organization.update({
+    where: { id: org.id },
+    data: {
+      stripeChargesEnabled: chargesEnabled,
+      stripePayoutsEnabled: payoutsEnabled,
+      stripeOnboardingComplete:
+        chargesEnabled && payoutsEnabled && detailsSubmitted,
     },
   });
 }

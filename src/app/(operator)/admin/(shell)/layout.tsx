@@ -4,6 +4,7 @@ import { requireOperatorProperty } from "@/lib/auth-property";
 import { getSetupGap } from "@/lib/setup-status";
 import { AppSidebar } from "@/components/admin/app-sidebar";
 import { AdminTopbar } from "@/components/admin/admin-topbar";
+import { OnboardingBanner } from "@/components/admin/onboarding-banner";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/toaster";
 
@@ -23,6 +24,10 @@ export default async function AdminShellLayout({
     redirect("/admin/setup");
   }
 
+  const needsPaymentSetup =
+    !ctx.organization.stripeOnboardingComplete ||
+    !ctx.organization.stripeChargesEnabled;
+
   return (
     <SidebarProvider>
       <AppSidebar propertyName={ctx.property.name} />
@@ -31,7 +36,10 @@ export default async function AdminShellLayout({
           title={ctx.property.name}
           email={ctx.session.user!.email!}
         />
-        <main className="flex-1 p-6">{children}</main>
+        <main className="flex-1 p-6">
+          {needsPaymentSetup ? <OnboardingBanner /> : null}
+          {children}
+        </main>
       </SidebarInset>
       <Toaster />
     </SidebarProvider>

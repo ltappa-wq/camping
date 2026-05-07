@@ -37,6 +37,7 @@ export type CheckoutInput = {
     phone: string;
   };
   addonQuantities: Record<string, number>;
+  guestNotes?: string;
 };
 
 export type CheckoutResult =
@@ -95,11 +96,15 @@ export async function startCheckout(
   });
   if (!property) return { ok: false, error: "Property not found." };
 
-  if (!property.organization.stripeAccountId) {
+  if (
+    !property.organization.stripeAccountId ||
+    !property.organization.stripeOnboardingComplete ||
+    !property.organization.stripeChargesEnabled
+  ) {
     return {
       ok: false,
       error:
-        "This property hasn't completed payment setup yet. Please try again later.",
+        "This property isn't accepting online bookings yet. Please try again later.",
     };
   }
 
@@ -267,6 +272,8 @@ export async function startCheckout(
     quote.baseCents + quote.modifierTotalCents + quote.addonsCents;
   const heldUntil = new Date(now.getTime() + HOLD_MINUTES * 60_000);
 
+  const trimmedNotes = input.guestNotes?.trim();
+
   const reservation = await prisma.reservation.create({
     data: {
       propertyId: property.id,
@@ -281,6 +288,7 @@ export async function startCheckout(
       taxCents: quote.taxCents,
       totalCents: quote.totalCents,
       heldUntil,
+      guestNotes: trimmedNotes ? trimmedNotes : null,
       cancelPolicySnapshot: {
         cancelFullRefundDays: property.cancelFullRefundDays,
         cancelPartialRefundDays: property.cancelPartialRefundDays,
@@ -302,8 +310,12 @@ export async function startCheckout(
   });
 
   // Create the Stripe Checkout session as a destination charge.
-  const fee = Math.round(
-    (quote.totalCents * property.organization.platformFeeBasisPoints) / 10000,
+  // Platform fee is a flat per-booking amount (org.platformFeeFlatCents).
+  // Cap at total in case the operator misconfigured a fee that would exceed
+  // a particularly cheap stay; Stripe rejects fees > total.
+  const fee = Math.min(
+    Math.max(0, property.organization.platformFeeFlatCents),
+    quote.totalCents,
   );
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
@@ -351,6 +363,13 @@ export async function startCheckout(
   if (!session.url) {
     return { ok: false, error: "Stripe did not return a checkout URL." };
   }
+
+  // Persist the session id so checkout.session.expired and any operator
+  // tooling can locate the reservation without round-tripping metadata.
+  await prisma.reservation.update({
+    where: { id: reservation.id },
+    data: { stripeCheckoutSessionId: session.id },
+  });
 
   return { ok: true, redirectUrl: session.url };
 }
