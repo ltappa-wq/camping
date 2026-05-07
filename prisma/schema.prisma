@@ -74,6 +74,7 @@ enum LineItemType {
 
 enum EmailTemplateType {
   RESERVATION_CONFIRMATION
+  OPERATOR_BOOKING_NOTIFICATION   // internal: alerts operator when a booking confirms
   ARRIVAL_REMINDER
   BALANCE_DUE
   CANCELLATION
