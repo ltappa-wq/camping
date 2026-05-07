@@ -16,7 +16,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "setup:storage": "tsx scripts/setup-supabase-storage.ts"
+    "setup:storage": "tsx scripts/setup-supabase-storage.ts",
+    "setup:stripe-test": "tsx scripts/stripe-bootstrap-test-account.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
