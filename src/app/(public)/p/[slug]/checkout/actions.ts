@@ -392,7 +392,7 @@ export async function startCheckout(
       stripeAccountId: property.organization.stripeAccountId,
       applicationFeeCents: String(platformFeeCents),
     },
-    success_url: `${baseUrl}/p/${input.slug}/confirmation/${reservation.id}?session_id={CHECKOUT_SESSION_ID}`,
+    success_url: `${baseUrl}/p/${input.slug}/booking/${reservation.confirmationCode}?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/p/${input.slug}/checkout?siteId=${input.siteId}&from=${input.from}&to=${input.to}&adults=${adults}&children=${children}`,
     expires_at: Math.floor(heldUntil.getTime() / 1000),
   });
