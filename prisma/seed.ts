@@ -7,10 +7,11 @@ const OWNER_EMAIL = "rvthereyetwi@gmail.com";
 async function main() {
   const org = await prisma.organization.upsert({
     where: { id: "seed-org-monument-point" },
-    update: {},
+    update: { platformFeeFlatCents: 300 },
     create: {
       id: "seed-org-monument-point",
       name: "Monument Point Camping LLC",
+      platformFeeFlatCents: 300,
     },
   });
 

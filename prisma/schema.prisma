@@ -104,8 +104,9 @@ model Organization {
   id                       String   @id @default(cuid())
   name                     String
 
-  // Platform fee is configurable per org (basis points; 100 = 1.00%)
-  platformFeeBasisPoints   Int      @default(100)
+  // Platform fee is a flat per-booking amount in cents (default $3.00).
+  // Phase 3: switched from percentage (basis points) to a flat fee.
+  platformFeeFlatCents     Int      @default(300)
 
   // Stripe Connect (Express)
   stripeAccountId          String?  @unique
@@ -484,6 +485,15 @@ model Reservation {
   // don't retroactively affect existing reservations
   cancelPolicySnapshot Json?
 
+  // Stripe Checkout Session created for this reservation. Stored so the
+  // checkout.session.expired and account-state webhooks can find the row
+  // without relying on metadata round-tripping.
+  stripeCheckoutSessionId String?       @unique
+
+  // Free-form note from the guest at booking time (distinct from
+  // operator-only Guest.notes).
+  guestNotes              String?       @db.Text
+
   // Soft hold expiry while in HELD status during checkout
   heldUntil        DateTime?
 
@@ -570,7 +580,7 @@ model Payment {
   stripeConnectedAccountId String        // operator's Stripe Connect account
 
   amountCents              Int
-  applicationFeeCents      Int           @default(0)  // platform's cut (org.platformFeeBasisPoints applied)
+  applicationFeeCents      Int           @default(0)  // platform's cut (org.platformFeeFlatCents at booking time)
   currency                 String        @default("USD")
 
   status                   PaymentStatus @default(PENDING)
