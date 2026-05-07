@@ -25,12 +25,29 @@ export async function getPropertyWithOrgBySlug(slug: string) {
           stripeAccountId: true,
           stripeOnboardingComplete: true,
           stripeChargesEnabled: true,
+          platformFeeFlatCents: true,
+          customerPaysPlatformFee: true,
         },
       },
     },
   });
   if (!property) notFound();
   return property;
+}
+
+/**
+ * Pricing-engine quote totals don't know about the platform fee. When the
+ * operator passes the fee to the customer, the displayed and charged total
+ * is quote.totalCents + platformFeeFlatCents (capped at quote.totalCents
+ * for the application-fee side, but added on top for the gross-up).
+ */
+export function effectiveTotalCents(
+  quoteTotalCents: number,
+  org: { platformFeeFlatCents: number; customerPaysPlatformFee: boolean },
+): number {
+  if (!org.customerPaysPlatformFee) return quoteTotalCents;
+  const fee = Math.max(0, org.platformFeeFlatCents);
+  return quoteTotalCents + Math.min(fee, quoteTotalCents);
 }
 
 export function isAcceptingBookings(org: {

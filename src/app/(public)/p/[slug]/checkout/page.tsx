@@ -18,7 +18,7 @@ import {
   type TaxRateInput,
 } from "@/lib/pricing";
 import { PublicHeader } from "../_components/public-header";
-import { getPropertyBySlug } from "../_lib/property";
+import { getPropertyWithOrgBySlug } from "../_lib/property";
 import { CheckoutForm } from "./checkout-form";
 
 type SearchParams = {
@@ -42,7 +42,7 @@ export default async function CheckoutPage({
 }) {
   const { slug } = await params;
   const sp = await searchParams;
-  const property = await getPropertyBySlug(slug);
+  const property = await getPropertyWithOrgBySlug(slug);
 
   const header = (
     <PublicHeader
@@ -261,6 +261,14 @@ export default async function CheckoutPage({
                 a.inventoryCount == null ? 99 : Math.max(0, a.inventoryCount),
             }))}
             initialQuote={baseQuote}
+            bookingFee={
+              property.organization.customerPaysPlatformFee
+                ? Math.min(
+                    Math.max(0, property.organization.platformFeeFlatCents),
+                    baseQuote.totalCents,
+                  )
+                : 0
+            }
             cancellationPolicy={{
               fullRefundDays: property.cancelFullRefundDays,
               partialRefundDays: property.cancelPartialRefundDays,

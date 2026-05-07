@@ -23,7 +23,10 @@ import {
 } from "@/lib/pricing";
 import { PublicHeader } from "../_components/public-header";
 import { SearchForm } from "../_components/search-form";
-import { getPropertyBySlug } from "../_lib/property";
+import {
+  effectiveTotalCents,
+  getPropertyWithOrgBySlug,
+} from "../_lib/property";
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -72,7 +75,7 @@ export default async function SearchPage({
 }) {
   const { slug } = await params;
   const sp = await searchParams;
-  const property = await getPropertyBySlug(slug);
+  const property = await getPropertyWithOrgBySlug(slug);
 
   const from = sp.from ?? "";
   const to = sp.to ?? "";
@@ -374,7 +377,12 @@ export default async function SearchPage({
                   </div>
                   <div className="text-right">
                     <div className="text-xl font-semibold tabular-nums">
-                      {formatCents(o.quote.totalCents)}
+                      {formatCents(
+                        effectiveTotalCents(
+                          o.quote.totalCents,
+                          property.organization,
+                        ),
+                      )}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       total · {nights} night{nights === 1 ? "" : "s"}

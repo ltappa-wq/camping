@@ -17,6 +17,7 @@ import {
   continueOnboardingAction,
   openStripeDashboardAction,
 } from "./actions";
+import { FeeModeToggle } from "./fee-mode-toggle";
 
 type Stage = "NOT_STARTED" | "IN_PROGRESS" | "ACTIVE";
 
@@ -80,6 +81,7 @@ export default async function PayoutsPage() {
       stripeChargesEnabled: true,
       stripePayoutsEnabled: true,
       platformFeeFlatCents: true,
+      customerPaysPlatformFee: true,
     },
   });
   if (!org) throw new Error("Organization not found");
@@ -149,14 +151,20 @@ export default async function PayoutsPage() {
             <CardTitle>Per-booking fee</CardTitle>
             <CardDescription>What we keep from each booking.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div className="text-2xl font-semibold tabular-nums">
-              {formatCents(org.platformFeeFlatCents)}
+          <CardContent className="space-y-4 text-sm">
+            <div>
+              <div className="text-2xl font-semibold tabular-nums">
+                {formatCents(org.platformFeeFlatCents)}
+              </div>
+              <p className="text-muted-foreground">
+                Contact platform support to change the fee amount.
+              </p>
             </div>
-            <p className="text-muted-foreground">
-              Charged automatically as a Stripe Connect application fee on each
-              completed booking. Contact platform support to change this.
-            </p>
+            <div className="border-t pt-4">
+              <FeeModeToggle
+                initialPassThrough={org.customerPaysPlatformFee}
+              />
+            </div>
           </CardContent>
         </Card>
       </div>

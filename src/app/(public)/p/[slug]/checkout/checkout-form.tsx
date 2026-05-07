@@ -34,6 +34,7 @@ export function CheckoutForm({
   children,
   addons,
   initialQuote,
+  bookingFee,
   cancellationPolicy,
 }: {
   slug: string;
@@ -46,6 +47,8 @@ export function CheckoutForm({
   children: number;
   addons: CheckoutAddon[];
   initialQuote: Quote;
+  /** Per-booking platform fee passed through to the customer; 0 when absorbed. */
+  bookingFee: number;
   cancellationPolicy: {
     fullRefundDays: number;
     partialRefundDays: number;
@@ -69,11 +72,15 @@ export function CheckoutForm({
       ),
     [addons, addonQty],
   );
-  // Cheap rough total: stay base + modifiers + addons + flat tax estimate.
-  // For an exact figure, the server returns the authoritative quote during
+  // Cheap rough total: stay base + modifiers + addons + flat tax estimate
+  // + booking fee (when the operator passes it to the customer). For an
+  // exact figure, the server returns the authoritative quote during
   // checkout. We label this clearly as an estimate to avoid confusion.
   const approxTotal =
-    initialQuote.totalCents - initialQuote.addonsCents + addonsTotalCents;
+    initialQuote.totalCents -
+    initialQuote.addonsCents +
+    addonsTotalCents +
+    bookingFee;
 
   function setQty(id: string, raw: string) {
     const n = Math.max(0, Math.floor(Number(raw) || 0));
@@ -237,6 +244,17 @@ export function CheckoutForm({
               <span className="tabular-nums">
                 {formatCents(addonsTotalCents)}
               </span>
+            </div>
+          ) : null}
+          {bookingFee > 0 ? (
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">
+                <Badge variant="outline" className="mr-2">
+                  Fee
+                </Badge>
+                Booking fee
+              </span>
+              <span className="tabular-nums">{formatCents(bookingFee)}</span>
             </div>
           ) : null}
         </div>

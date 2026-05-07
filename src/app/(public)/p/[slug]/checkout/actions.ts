@@ -274,6 +274,23 @@ export async function startCheckout(
 
   const trimmedNotes = input.guestNotes?.trim();
 
+  // Platform fee. Cap at total to avoid Stripe rejecting an oversized
+  // application_fee_amount on a particularly cheap stay (e.g. operator-
+  // configured fee accidentally exceeds a 1-night discounted booking).
+  const platformFeeCents = Math.min(
+    Math.max(0, property.organization.platformFeeFlatCents),
+    quote.totalCents,
+  );
+  const passThroughFee =
+    property.organization.customerPaysPlatformFee && platformFeeCents > 0;
+
+  // In pass-through mode, the customer is charged total + fee. Otherwise
+  // they're charged total and the operator absorbs the fee via Stripe's
+  // application_fee_amount on the destination charge.
+  const chargeAmountCents = passThroughFee
+    ? quote.totalCents + platformFeeCents
+    : quote.totalCents;
+
   const reservation = await prisma.reservation.create({
     data: {
       propertyId: property.id,
@@ -286,7 +303,7 @@ export async function startCheckout(
       status: "HELD",
       subtotalCents,
       taxCents: quote.taxCents,
-      totalCents: quote.totalCents,
+      totalCents: chargeAmountCents,
       heldUntil,
       guestNotes: trimmedNotes ? trimmedNotes : null,
       cancelPolicySnapshot: {
@@ -295,30 +312,37 @@ export async function startCheckout(
         cancelPartialRefundPct: property.cancelPartialRefundPct,
       },
       lineItems: {
-        create: quote.lineItems.map((li) => ({
-          type: lineItemTypeFor(li.kind),
-          description: li.description,
-          quantity: 1,
-          unitPriceCents: li.amountCents,
-          amountCents: li.amountCents,
-          ratePlanId: li.ratePlanId ?? null,
-          addonId: li.addonId ?? null,
-          taxRateId: li.taxRateId ?? null,
-        })),
+        create: [
+          ...quote.lineItems.map((li) => ({
+            type: lineItemTypeFor(li.kind),
+            description: li.description,
+            quantity: 1,
+            unitPriceCents: li.amountCents,
+            amountCents: li.amountCents,
+            ratePlanId: li.ratePlanId ?? null,
+            addonId: li.addonId ?? null,
+            taxRateId: li.taxRateId ?? null,
+          })),
+          ...(passThroughFee
+            ? [
+                {
+                  type: "FEE" as const,
+                  description: "Booking fee",
+                  quantity: 1,
+                  unitPriceCents: platformFeeCents,
+                  amountCents: platformFeeCents,
+                },
+              ]
+            : []),
+        ],
       },
     },
   });
 
   // Create the Stripe Checkout session as a destination charge.
-  // Platform fee is a flat per-booking amount (org.platformFeeFlatCents).
-  // Cap at total in case the operator misconfigured a fee that would exceed
-  // a particularly cheap stay; Stripe rejects fees > total.
-  const fee = Math.min(
-    Math.max(0, property.organization.platformFeeFlatCents),
-    quote.totalCents,
-  );
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const currency = (property.currency ?? "USD").toLowerCase();
   const stripe = getStripe();
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -326,7 +350,7 @@ export async function startCheckout(
     line_items: [
       {
         price_data: {
-          currency: (property.currency ?? "USD").toLowerCase(),
+          currency,
           product_data: {
             name: `${property.name} — Site ${site.label}`,
             description: `${input.from} → ${input.to} · ${quote.nights} night${quote.nights === 1 ? "" : "s"}`,
@@ -335,10 +359,23 @@ export async function startCheckout(
         },
         quantity: 1,
       },
+      ...(passThroughFee
+        ? [
+            {
+              price_data: {
+                currency,
+                product_data: { name: "Booking fee" },
+                unit_amount: platformFeeCents,
+              },
+              quantity: 1,
+            },
+          ]
+        : []),
     ],
     customer_email: email,
     payment_intent_data: {
-      application_fee_amount: fee > 0 ? fee : undefined,
+      application_fee_amount:
+        platformFeeCents > 0 ? platformFeeCents : undefined,
       transfer_data: {
         destination: property.organization.stripeAccountId,
       },
@@ -353,7 +390,7 @@ export async function startCheckout(
       propertyId: property.id,
       slug: input.slug,
       stripeAccountId: property.organization.stripeAccountId,
-      applicationFeeCents: String(fee > 0 ? fee : 0),
+      applicationFeeCents: String(platformFeeCents),
     },
     success_url: `${baseUrl}/p/${input.slug}/confirmation/${reservation.id}?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/p/${input.slug}/checkout?siteId=${input.siteId}&from=${input.from}&to=${input.to}&adults=${adults}&children=${children}`,
