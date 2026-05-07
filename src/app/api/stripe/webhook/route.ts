@@ -1,11 +1,14 @@
 import { headers } from "next/headers";
 import type Stripe from "stripe";
+import type { EmailTemplateType, Guest } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
 import {
+  type EmailContent,
   formatTotalForEmail,
   renderEmail,
+  renderOperatorBookingNotification,
   sendEmail,
 } from "@/lib/email";
 
@@ -140,7 +143,14 @@ async function handleCheckoutCompleted(
 
   if (alreadyConfirmed) return;
 
-  // Confirmation email — operator override beats system default.
+  const checkInDate = reservation.checkIn.toISOString().slice(0, 10);
+  const checkOutDate = reservation.checkOut.toISOString().slice(0, 10);
+  const nights = Math.round(
+    (reservation.checkOut.getTime() - reservation.checkIn.getTime()) /
+      86_400_000,
+  );
+
+  // Guest confirmation — operator template override beats system default.
   const override = await prisma.emailTemplate.findUnique({
     where: {
       propertyId_type: {
@@ -150,7 +160,7 @@ async function handleCheckoutCompleted(
     },
   });
 
-  const content = renderEmail(
+  const guestContent = renderEmail(
     "RESERVATION_CONFIRMATION",
     {
       guestName: reservation.guest.name,
@@ -158,38 +168,96 @@ async function handleCheckoutCompleted(
       propertyName: reservation.property.name,
       siteLabel: reservation.site.label,
       siteTypeName: reservation.site.siteType.name,
-      checkInDate: reservation.checkIn.toISOString().slice(0, 10),
-      checkOutDate: reservation.checkOut.toISOString().slice(0, 10),
+      checkInDate,
+      checkOutDate,
       checkInTime: reservation.property.checkInTime,
       checkOutTime: reservation.property.checkOutTime,
-      nights: Math.round(
-        (reservation.checkOut.getTime() - reservation.checkIn.getTime()) /
-          86_400_000,
-      ),
+      nights,
       totalCents: reservation.totalCents,
       totalFormatted: formatTotalForEmail(reservation.totalCents),
     },
     override && override.active ? override : null,
   );
 
-  const log = await prisma.emailLog.create({
-    data: {
+  // Operator notification — internal alert; no template override hook.
+  const operatorRecipient = await resolveOperatorEmail(
+    reservation.property.email,
+    reservation.property.organizationId,
+  );
+
+  const applicationFeeCents =
+    Number(session.metadata?.applicationFeeCents ?? 0) || 0;
+  const operatorContent = renderOperatorBookingNotification({
+    propertyName: reservation.property.name,
+    confirmationCode: reservation.confirmationCode,
+    guestName: reservation.guest.name,
+    guestEmail: reservation.guest.email,
+    guestPhone: reservation.guest.phone,
+    rvInfo: formatRvInfo(reservation.guest),
+    guestNotes: reservation.guestNotes,
+    siteLabel: reservation.site.label,
+    siteTypeName: reservation.site.siteType.name,
+    checkInDate,
+    checkOutDate,
+    nights,
+    totalCents: reservation.totalCents,
+    payoutCents: Math.max(0, reservation.totalCents - applicationFeeCents),
+    adminUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/admin`,
+  });
+
+  // Both sends are best-effort; we log per-email and never block webhook ack
+  // on Resend availability. allSettled keeps one failure from suppressing
+  // the other.
+  const dispatches: Promise<unknown>[] = [
+    dispatchEmail({
       propertyId: reservation.propertyId,
       reservationId: reservation.id,
       type: "RESERVATION_CONFIRMATION",
-      toEmail: reservation.guest.email,
-      subject: content.subject,
+      to: reservation.guest.email,
+      content: guestContent,
+    }),
+  ];
+  if (operatorRecipient) {
+    dispatches.push(
+      dispatchEmail({
+        propertyId: reservation.propertyId,
+        reservationId: reservation.id,
+        type: "OPERATOR_BOOKING_NOTIFICATION",
+        to: operatorRecipient,
+        content: operatorContent,
+      }),
+    );
+  } else {
+    console.warn(
+      `No operator recipient for property ${reservation.propertyId}; skipping operator notification`,
+    );
+  }
+  await Promise.allSettled(dispatches);
+}
+
+async function dispatchEmail(args: {
+  propertyId: string;
+  reservationId: string;
+  type: EmailTemplateType;
+  to: string;
+  content: EmailContent;
+}): Promise<void> {
+  const log = await prisma.emailLog.create({
+    data: {
+      propertyId: args.propertyId,
+      reservationId: args.reservationId,
+      type: args.type,
+      toEmail: args.to,
+      subject: args.content.subject,
       status: "QUEUED",
     },
   });
-
   const send = await sendEmail({
-    to: reservation.guest.email,
-    subject: content.subject,
-    bodyHtml: content.bodyHtml,
-    bodyText: content.bodyText,
+    to: args.to,
+    subject: args.content.subject,
+    bodyHtml: args.content.bodyHtml,
+    bodyText: args.content.bodyText,
   });
-
   await prisma.emailLog.update({
     where: { id: log.id },
     data: send.ok
@@ -203,6 +271,30 @@ async function handleCheckoutCompleted(
           errorMessage: send.error,
         },
   });
+}
+
+async function resolveOperatorEmail(
+  propertyEmail: string | null,
+  organizationId: string,
+): Promise<string | null> {
+  if (propertyEmail) return propertyEmail;
+  const owner = await prisma.operatorUser.findFirst({
+    where: { organizationId, role: "OWNER" },
+    orderBy: { createdAt: "asc" },
+    select: { email: true },
+  });
+  return owner?.email ?? null;
+}
+
+function formatRvInfo(g: Guest): string | null {
+  const head = [g.rvYear ? String(g.rvYear) : null, g.rvMake, g.rvModel]
+    .filter((s): s is string => Boolean(s))
+    .join(" ");
+  const tail: string[] = [];
+  if (g.rvLengthFt) tail.push(`${g.rvLengthFt} ft`);
+  if (g.licensePlate) tail.push(`plate ${g.licensePlate}`);
+  const result = [head, tail.join(", ")].filter((s) => s.length > 0).join(", ");
+  return result.length > 0 ? result : null;
 }
 
 async function handleCheckoutExpired(

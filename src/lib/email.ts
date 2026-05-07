@@ -123,3 +123,76 @@ export async function sendEmail(args: {
 export function formatTotalForEmail(totalCents: number): string {
   return formatCents(totalCents);
 }
+
+export type OperatorBookingNotificationVars = {
+  propertyName: string;
+  confirmationCode: string;
+  guestName: string;
+  guestEmail: string;
+  guestPhone: string | null;
+  rvInfo: string | null;
+  guestNotes: string | null;
+  siteLabel: string;
+  siteTypeName: string;
+  checkInDate: string; // YYYY-MM-DD
+  checkOutDate: string;
+  nights: number;
+  totalCents: number;
+  payoutCents: number;
+  adminUrl: string;
+};
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Internal notification sent to the operator when a booking confirms. Plain
+ * text is the source of truth; the HTML body is the same content wrapped in
+ * a monospace block so layout is preserved in clients that prefer HTML.
+ *
+ * Operators cannot customize this template (no EmailTemplate override); it's
+ * an internal alert, not a guest-facing message.
+ */
+export function renderOperatorBookingNotification(
+  v: OperatorBookingNotificationVars,
+): EmailContent {
+  const lines: string[] = [
+    `New booking received at ${v.propertyName}.`,
+    "",
+    `Confirmation: ${v.confirmationCode}`,
+    `Site: ${v.siteLabel} (${v.siteTypeName})`,
+    `Dates: ${v.checkInDate} → ${v.checkOutDate} (${v.nights} night${
+      v.nights === 1 ? "" : "s"
+    })`,
+    "",
+    `Guest: ${v.guestName}`,
+    `Email: ${v.guestEmail}`,
+  ];
+  if (v.guestPhone) lines.push(`Phone: ${v.guestPhone}`);
+  if (v.rvInfo) {
+    lines.push("", `RV: ${v.rvInfo}`);
+  }
+  if (v.guestNotes) {
+    lines.push("", "Note from guest:", v.guestNotes);
+  }
+  lines.push(
+    "",
+    `Total charged: ${formatCents(v.totalCents)}`,
+    `Your payout: ${formatCents(v.payoutCents)}`,
+    "",
+    `Manage: ${v.adminUrl}`,
+  );
+  const bodyText = lines.join("\n");
+  const bodyHtml = `<pre style="font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; margin: 0;">${escapeHtml(
+    bodyText,
+  )}</pre>`;
+  return {
+    subject: `New booking: ${v.guestName} — ${v.checkInDate} → ${v.checkOutDate}`,
+    bodyHtml,
+    bodyText,
+  };
+}
