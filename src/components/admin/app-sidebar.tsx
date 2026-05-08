@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Building2,
   Calculator,
+  CalendarDays,
   Layers,
   TentTree,
   Tag,
@@ -28,6 +29,7 @@ import {
 } from "@/components/ui/sidebar";
 
 const NAV_ITEMS = [
+  { href: "/admin/reservations", label: "Reservations", icon: CalendarDays },
   { href: "/admin/property", label: "Property", icon: Building2 },
   { href: "/admin/site-types", label: "Site Types", icon: Layers },
   { href: "/admin/sites", label: "Sites", icon: TentTree },
