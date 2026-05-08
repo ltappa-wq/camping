@@ -585,10 +585,18 @@ model Payment {
   reservationId            String
   reservation              Reservation   @relation(fields: [reservationId], references: [id], onDelete: Cascade)
 
-  // Stripe references — charges routed through operator's connected account
+  // Stripe references — charges routed through operator's connected account.
+  // All three are nullable because Phase 4 supports non-Stripe payments
+  // (cash, check, comp, manual card via terminal) recorded by the operator.
   stripePaymentIntentId    String?       @unique
   stripeChargeId           String?
-  stripeConnectedAccountId String        // operator's Stripe Connect account
+  stripeConnectedAccountId String?       // operator's Stripe Connect account
+
+  // Phase 4: payment method enum captured as a String for v1 flexibility.
+  // Values: STRIPE | CARD_MANUAL | CASH | CHECK | COMP | OTHER.
+  paymentMethod            String        @default("STRIPE")
+  /// Free-form operator note (e.g., "Check #4521", "Walk-up cash").
+  notes                    String?
 
   amountCents              Int
   applicationFeeCents      Int           @default(0)  // platform's cut (org.platformFeeFlatCents at booking time)
