@@ -6,6 +6,7 @@ import {
   Building2,
   Calculator,
   CalendarDays,
+  Grid3x3,
   Layers,
   TentTree,
   Tag,
@@ -29,6 +30,7 @@ import {
 } from "@/components/ui/sidebar";
 
 const NAV_ITEMS = [
+  { href: "/admin/grid", label: "Grid", icon: Grid3x3 },
   { href: "/admin/reservations", label: "Reservations", icon: CalendarDays },
   { href: "/admin/property", label: "Property", icon: Building2 },
   { href: "/admin/site-types", label: "Site Types", icon: Layers },
