@@ -6,11 +6,8 @@ import { revalidatePath } from "next/cache";
 
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { prisma } from "@/lib/prisma";
-import {
-  formatTotalForEmail,
-  renderEmail,
-  sendEmail,
-} from "@/lib/email";
+import { formatTotalForEmail, renderEmail } from "@/lib/email";
+import { dispatchEmail } from "@/lib/email-dispatch";
 import {
   type ManualOverride,
   type ManualPayment,
@@ -314,6 +311,8 @@ export async function createManualReservationAction(
       },
     });
 
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
     const content = renderEmail(
       "RESERVATION_CONFIRMATION",
       {
@@ -331,37 +330,17 @@ export async function createManualReservationAction(
         totalFormatted: payload.isComp
           ? "Complimentary"
           : formatTotalForEmail(payload.totalCents),
+        manageUrl: `${appUrl}/p/${property.slug}/booking/${confirmationCode}`,
       },
       override && override.active ? override : null,
     );
 
-    const log = await prisma.emailLog.create({
-      data: {
-        propertyId: property.id,
-        reservationId: reservation.id,
-        type: "RESERVATION_CONFIRMATION",
-        toEmail: email,
-        subject: content.subject,
-        status: "QUEUED",
-      },
-    });
-
-    const send = await sendEmail({
+    await dispatchEmail({
+      propertyId: property.id,
+      reservationId: reservation.id,
+      type: "RESERVATION_CONFIRMATION",
       to: email,
-      subject: content.subject,
-      bodyHtml: content.bodyHtml,
-      bodyText: content.bodyText,
-    });
-
-    await prisma.emailLog.update({
-      where: { id: log.id },
-      data: send.ok
-        ? {
-            status: "SENT",
-            providerMessageId: send.messageId,
-            sentAt: new Date(),
-          }
-        : { status: "FAILED", errorMessage: send.error },
+      content,
     });
   }
 

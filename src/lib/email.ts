@@ -18,6 +18,9 @@ export type EmailVars = {
   nights: number;
   totalFormatted: string;
   totalCents: number;
+  /** Public-facing URL the guest can revisit to see their booking
+   *  (state machine identical to the post-checkout page). */
+  manageUrl: string;
 };
 
 export type EmailContent = {
@@ -45,6 +48,8 @@ Your booking at {{propertyName}} is confirmed.
   Check-out: {{checkOutDate}} at {{checkOutTime}}
   Total: {{totalFormatted}}
 
+View or manage your booking: {{manageUrl}}
+
 If you need to make changes, reply to this email.
 
 — {{propertyName}}`,
@@ -57,6 +62,7 @@ If you need to make changes, reply to this email.
 <tr><td style="color:#666">Check-out</td><td>{{checkOutDate}} at {{checkOutTime}}</td></tr>
 <tr><td style="color:#666">Total</td><td><strong>{{totalFormatted}}</strong></td></tr>
 </table>
+<p><a href="{{manageUrl}}">View or manage your booking</a></p>
 <p>If you need to make changes, reply to this email.</p>
 <p>— {{propertyName}}</p>`,
   },
@@ -86,6 +92,7 @@ export function renderEmail(
     nights: String(vars.nights),
     totalFormatted: vars.totalFormatted,
     totalCents: String(vars.totalCents),
+    manageUrl: vars.manageUrl,
   };
   return {
     subject: fill(tpl.subject, stringVars),

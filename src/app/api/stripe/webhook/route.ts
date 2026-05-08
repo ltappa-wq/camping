@@ -1,16 +1,15 @@
 import { headers } from "next/headers";
 import type Stripe from "stripe";
-import type { EmailTemplateType, Guest } from "@prisma/client";
+import type { Guest } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
 import {
-  type EmailContent,
   formatTotalForEmail,
   renderEmail,
   renderOperatorBookingNotification,
-  sendEmail,
 } from "@/lib/email";
+import { dispatchEmail } from "@/lib/email-dispatch";
 
 export async function POST(req: Request) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -160,6 +159,8 @@ async function handleCheckoutCompleted(
     },
   });
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
   const guestContent = renderEmail(
     "RESERVATION_CONFIRMATION",
     {
@@ -175,6 +176,7 @@ async function handleCheckoutCompleted(
       nights,
       totalCents: reservation.totalCents,
       totalFormatted: formatTotalForEmail(reservation.totalCents),
+      manageUrl: `${appUrl}/p/${reservation.property.slug}/booking/${reservation.confirmationCode}`,
     },
     override && override.active ? override : null,
   );
@@ -202,7 +204,7 @@ async function handleCheckoutCompleted(
     nights,
     totalCents: reservation.totalCents,
     payoutCents: Math.max(0, reservation.totalCents - applicationFeeCents),
-    adminUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/admin`,
+    adminUrl: `${appUrl}/admin/reservations/${reservation.id}`,
   });
 
   // Both sends are best-effort; we log per-email and never block webhook ack
@@ -233,44 +235,6 @@ async function handleCheckoutCompleted(
     );
   }
   await Promise.allSettled(dispatches);
-}
-
-async function dispatchEmail(args: {
-  propertyId: string;
-  reservationId: string;
-  type: EmailTemplateType;
-  to: string;
-  content: EmailContent;
-}): Promise<void> {
-  const log = await prisma.emailLog.create({
-    data: {
-      propertyId: args.propertyId,
-      reservationId: args.reservationId,
-      type: args.type,
-      toEmail: args.to,
-      subject: args.content.subject,
-      status: "QUEUED",
-    },
-  });
-  const send = await sendEmail({
-    to: args.to,
-    subject: args.content.subject,
-    bodyHtml: args.content.bodyHtml,
-    bodyText: args.content.bodyText,
-  });
-  await prisma.emailLog.update({
-    where: { id: log.id },
-    data: send.ok
-      ? {
-          status: "SENT",
-          providerMessageId: send.messageId,
-          sentAt: new Date(),
-        }
-      : {
-          status: "FAILED",
-          errorMessage: send.error,
-        },
-  });
 }
 
 async function resolveOperatorEmail(

@@ -5,12 +5,11 @@ import { revalidatePath } from "next/cache";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { prisma } from "@/lib/prisma";
 import {
-  type EmailContent,
   formatTotalForEmail,
   renderCancellationEmail,
   renderEmail,
-  sendEmail,
 } from "@/lib/email";
+import { dispatchEmail } from "@/lib/email-dispatch";
 import { getStripe } from "@/lib/stripe";
 import {
   checkAvailability,
@@ -188,7 +187,9 @@ export async function resendConfirmationAction(
     },
   });
 
-  const content: EmailContent = renderEmail(
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
+  const content = renderEmail(
     "RESERVATION_CONFIRMATION",
     {
       guestName: reservation.guest.name,
@@ -203,37 +204,17 @@ export async function resendConfirmationAction(
       nights,
       totalCents: reservation.totalCents,
       totalFormatted: formatTotalForEmail(reservation.totalCents),
+      manageUrl: `${appUrl}/p/${reservation.property.slug}/booking/${reservation.confirmationCode}`,
     },
     override && override.active ? override : null,
   );
 
-  const log = await prisma.emailLog.create({
-    data: {
-      propertyId: reservation.propertyId,
-      reservationId: reservation.id,
-      type: "RESERVATION_CONFIRMATION",
-      toEmail: reservation.guest.email,
-      subject: content.subject,
-      status: "QUEUED",
-    },
-  });
-
-  const send = await sendEmail({
+  const send = await dispatchEmail({
+    propertyId: reservation.propertyId,
+    reservationId: reservation.id,
+    type: "RESERVATION_CONFIRMATION",
     to: reservation.guest.email,
-    subject: content.subject,
-    bodyHtml: content.bodyHtml,
-    bodyText: content.bodyText,
-  });
-
-  await prisma.emailLog.update({
-    where: { id: log.id },
-    data: send.ok
-      ? {
-          status: "SENT",
-          providerMessageId: send.messageId,
-          sentAt: new Date(),
-        }
-      : { status: "FAILED", errorMessage: send.error },
+    content,
   });
 
   revalidatePath(`/admin/reservations/${reservationId}`);
@@ -406,33 +387,12 @@ export async function cancelReservationAction(
       reason,
     });
 
-    const log = await prisma.emailLog.create({
-      data: {
-        propertyId: reservation.propertyId,
-        reservationId: reservation.id,
-        type: "CANCELLATION",
-        toEmail: reservation.guest.email,
-        subject: content.subject,
-        status: "QUEUED",
-      },
-    });
-
-    const send = await sendEmail({
+    await dispatchEmail({
+      propertyId: reservation.propertyId,
+      reservationId: reservation.id,
+      type: "CANCELLATION",
       to: reservation.guest.email,
-      subject: content.subject,
-      bodyHtml: content.bodyHtml,
-      bodyText: content.bodyText,
-    });
-
-    await prisma.emailLog.update({
-      where: { id: log.id },
-      data: send.ok
-        ? {
-            status: "SENT",
-            providerMessageId: send.messageId,
-            sentAt: new Date(),
-          }
-        : { status: "FAILED", errorMessage: send.error },
+      content,
     });
   }
 
