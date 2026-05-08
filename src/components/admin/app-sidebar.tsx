@@ -7,6 +7,7 @@ import {
   Calculator,
   CalendarDays,
   Grid3x3,
+  LayoutDashboard,
   Layers,
   TentTree,
   Tag,
@@ -30,6 +31,7 @@ import {
 } from "@/components/ui/sidebar";
 
 const NAV_ITEMS = [
+  { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/grid", label: "Grid", icon: Grid3x3 },
   { href: "/admin/reservations", label: "Reservations", icon: CalendarDays },
   { href: "/admin/property", label: "Property", icon: Building2 },
@@ -62,7 +64,13 @@ export function AppSidebar({ propertyName }: { propertyName: string }) {
             <SidebarMenu>
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
-                const active = pathname?.startsWith(item.href);
+                // /admin is a prefix of every other admin route, so it
+                // would match all of them with startsWith. Special-case it
+                // to require an exact match.
+                const active =
+                  item.href === "/admin"
+                    ? pathname === "/admin"
+                    : pathname?.startsWith(item.href);
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton asChild isActive={active}>
