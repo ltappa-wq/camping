@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/admin/page-header";
 import {
   Table,
@@ -76,6 +77,11 @@ export default async function ReservationsPage({
       <PageHeader
         title="Reservations"
         description={`${rows.length} reservation${rows.length === 1 ? "" : "s"} match the current filters.`}
+        actions={
+          <Button asChild size="sm">
+            <Link href="/admin/reservations/new">New reservation</Link>
+          </Button>
+        }
       />
 
       <FilterBar filters={filters} siteTypes={siteTypes} csvHref={csvHref} />
