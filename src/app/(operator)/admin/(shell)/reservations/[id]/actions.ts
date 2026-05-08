@@ -7,9 +7,11 @@ import { prisma } from "@/lib/prisma";
 import {
   type EmailContent,
   formatTotalForEmail,
+  renderCancellationEmail,
   renderEmail,
   sendEmail,
 } from "@/lib/email";
+import { getStripe } from "@/lib/stripe";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -224,4 +226,204 @@ export async function resendConfirmationAction(
     };
   }
   return { ok: true };
+}
+
+export type CancelReservationInput = {
+  reservationId: string;
+  /** Refund amount in cents. 0 means cancel without refunding. */
+  refundCents: number;
+  /** Required free-text reason; goes to Reservation.cancellationReason. */
+  reason: string;
+  /** When true, send a cancellation email to the guest. */
+  notifyGuest: boolean;
+};
+
+/**
+ * Cancel a reservation, optionally refunding via Stripe. The Stripe call
+ * happens outside the DB transaction (it's a network call to a third
+ * party; can't be rolled back). Order is:
+ *   1. Pre-flight validation
+ *   2. Stripe refund (if any) — if this fails, the reservation is NOT
+ *      cancelled. Operator sees the Stripe error and can retry.
+ *   3. DB transaction: flip status, update Payment, update refundedCents
+ *   4. Email dispatch (best-effort, logged to EmailLog)
+ *
+ * The Stripe refund uses reverse_transfer:true to pull funds back from
+ * the operator's connected account, and refund_application_fee:false to
+ * keep the platform fee — both must agree with computeRefund's
+ * retainPlatformFee:true caller-side or the books drift.
+ */
+export async function cancelReservationAction(
+  input: CancelReservationInput,
+): Promise<ActionResult> {
+  const ctx = await requireOperatorPropertyOrSetup();
+
+  const reason = input.reason.trim();
+  if (!reason) return { ok: false, error: "Reason is required." };
+
+  const refundCents = Math.max(0, Math.floor(input.refundCents));
+
+  const reservation = await prisma.reservation.findFirst({
+    where: { id: input.reservationId, propertyId: ctx.propertyId },
+    include: {
+      property: true,
+      site: { include: { siteType: true } },
+      guest: true,
+      payments: true,
+    },
+  });
+  if (!reservation) return { ok: false, error: "Reservation not found." };
+
+  if (
+    reservation.status === "CANCELLED" ||
+    reservation.status === "DRAFT"
+  ) {
+    return {
+      ok: false,
+      error: `Reservation is already ${reservation.status.toLowerCase()}; nothing to cancel.`,
+    };
+  }
+
+  const remainingRefundable =
+    reservation.paidCents - reservation.refundedCents;
+  if (refundCents > remainingRefundable) {
+    return {
+      ok: false,
+      error: `Refund amount exceeds remaining refundable (${remainingRefundable} cents).`,
+    };
+  }
+
+  const stripePayment = reservation.payments.find(
+    (p) =>
+      p.paymentMethod === "STRIPE" &&
+      p.stripePaymentIntentId &&
+      p.status === "SUCCEEDED",
+  );
+
+  if (refundCents > 0 && !stripePayment) {
+    return {
+      ok: false,
+      error:
+        "No successful Stripe payment to refund. Cancel without a refund and return any cash/check payments directly.",
+    };
+  }
+
+  // Fire the Stripe refund first; if it errors we don't want to mark the
+  // reservation cancelled with a phantom refund.
+  let stripeRefundId: string | null = null;
+  if (refundCents > 0 && stripePayment?.stripePaymentIntentId) {
+    try {
+      const refund = await getStripe().refunds.create({
+        payment_intent: stripePayment.stripePaymentIntentId,
+        amount: refundCents,
+        reverse_transfer: true,
+        refund_application_fee: false,
+        metadata: {
+          reservationId: reservation.id,
+          operatorId: ctx.operator.id,
+        },
+      });
+      stripeRefundId = refund.id;
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unknown Stripe error";
+      return {
+        ok: false,
+        error: `Stripe refund failed: ${message}. Reservation was NOT cancelled.`,
+      };
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.reservation.update({
+      where: { id: reservation.id },
+      data: {
+        status: "CANCELLED",
+        cancelledAt: new Date(),
+        cancellationReason: reason,
+        refundedCents: { increment: refundCents },
+        heldUntil: null,
+      },
+    });
+
+    if (refundCents > 0 && stripePayment) {
+      const newRefunded = stripePayment.refundedAmountCents + refundCents;
+      const fullyRefunded = newRefunded >= stripePayment.amountCents;
+      await tx.payment.update({
+        where: { id: stripePayment.id },
+        data: {
+          refundedAmountCents: newRefunded,
+          status: fullyRefunded ? "REFUNDED" : "PARTIALLY_REFUNDED",
+          notes: stripeRefundId
+            ? appendNote(stripePayment.notes, `Refund ${stripeRefundId}`)
+            : stripePayment.notes,
+        },
+      });
+    }
+  });
+
+  if (input.notifyGuest) {
+    const propertyContact = [
+      reservation.property.email
+        ? `Email: ${reservation.property.email}`
+        : null,
+      reservation.property.phone
+        ? `Phone: ${reservation.property.phone}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const content = renderCancellationEmail({
+      guestName: reservation.guest.name,
+      confirmationCode: reservation.confirmationCode,
+      propertyName: reservation.property.name,
+      siteLabel: reservation.site.label,
+      siteTypeName: reservation.site.siteType.name,
+      checkInDate: reservation.checkIn.toISOString().slice(0, 10),
+      checkOutDate: reservation.checkOut.toISOString().slice(0, 10),
+      refundCents,
+      propertyContact,
+      reason,
+    });
+
+    const log = await prisma.emailLog.create({
+      data: {
+        propertyId: reservation.propertyId,
+        reservationId: reservation.id,
+        type: "CANCELLATION",
+        toEmail: reservation.guest.email,
+        subject: content.subject,
+        status: "QUEUED",
+      },
+    });
+
+    const send = await sendEmail({
+      to: reservation.guest.email,
+      subject: content.subject,
+      bodyHtml: content.bodyHtml,
+      bodyText: content.bodyText,
+    });
+
+    await prisma.emailLog.update({
+      where: { id: log.id },
+      data: send.ok
+        ? {
+            status: "SENT",
+            providerMessageId: send.messageId,
+            sentAt: new Date(),
+          }
+        : { status: "FAILED", errorMessage: send.error },
+    });
+  }
+
+  revalidatePath(`/admin/reservations/${reservation.id}`);
+  revalidatePath("/admin/reservations");
+
+  return { ok: true };
+}
+
+function appendNote(prev: string | null, addition: string): string {
+  if (!prev) return addition;
+  return `${prev}\n${addition}`;
 }

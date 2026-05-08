@@ -124,6 +124,74 @@ export function formatTotalForEmail(totalCents: number): string {
   return formatCents(totalCents);
 }
 
+export type CancellationEmailVars = {
+  guestName: string;
+  confirmationCode: string;
+  propertyName: string;
+  siteLabel: string;
+  siteTypeName: string;
+  checkInDate: string; // YYYY-MM-DD
+  checkOutDate: string;
+  /** 0 if no refund issued. */
+  refundCents: number;
+  /** Property contact lines (email/phone), already formatted; empty if none. */
+  propertyContact: string;
+  reason: string | null;
+};
+
+/**
+ * Renders the cancellation email sent to the guest after an operator
+ * cancels their reservation. Hardcoded for v1 — operators can't override
+ * the template yet (EmailTemplate model exists for future use). The
+ * "5–10 business days" line covers Stripe's typical refund timing.
+ */
+export function renderCancellationEmail(
+  v: CancellationEmailVars,
+): EmailContent {
+  const refundLine =
+    v.refundCents > 0
+      ? `A refund of ${formatCents(v.refundCents)} is on its way back to your card. Refunds typically take 5–10 business days to appear on your statement.`
+      : `No refund will be issued per the cancellation policy in effect at the time of booking.`;
+
+  const reasonLine = v.reason ? `\nNote from the operator: ${v.reason}\n` : "";
+
+  const bodyText = `Hi ${v.guestName},
+
+Your booking at ${v.propertyName} has been cancelled.
+
+  Confirmation: ${v.confirmationCode}
+  Site:         ${v.siteLabel} (${v.siteTypeName})
+  Dates:        ${v.checkInDate} → ${v.checkOutDate}
+${reasonLine}
+${refundLine}
+
+If you have questions, reply to this email${v.propertyContact ? ` or reach the property directly:\n\n${v.propertyContact}` : "."}
+
+— ${v.propertyName}`;
+
+  const bodyHtml = `<p>Hi ${escapeHtml(v.guestName)},</p>
+<p>Your booking at <strong>${escapeHtml(v.propertyName)}</strong> has been cancelled.</p>
+<table cellpadding="4" style="border-collapse:collapse">
+<tr><td style="color:#666">Confirmation</td><td><strong>${escapeHtml(v.confirmationCode)}</strong></td></tr>
+<tr><td style="color:#666">Site</td><td>${escapeHtml(v.siteLabel)} (${escapeHtml(v.siteTypeName)})</td></tr>
+<tr><td style="color:#666">Dates</td><td>${escapeHtml(v.checkInDate)} → ${escapeHtml(v.checkOutDate)}</td></tr>
+</table>
+${v.reason ? `<p><em>Note from the operator:</em> ${escapeHtml(v.reason)}</p>` : ""}
+<p>${escapeHtml(refundLine)}</p>
+<p>If you have questions, reply to this email${
+    v.propertyContact
+      ? `<br><br>${escapeHtml(v.propertyContact).replace(/\n/g, "<br>")}`
+      : "."
+  }</p>
+<p>— ${escapeHtml(v.propertyName)}</p>`;
+
+  return {
+    subject: `Booking cancelled: ${v.propertyName} — ${v.confirmationCode}`,
+    bodyHtml,
+    bodyText,
+  };
+}
+
 export type OperatorBookingNotificationVars = {
   propertyName: string;
   confirmationCode: string;

@@ -5,6 +5,8 @@ import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/admin/page-header";
 import { formatCents } from "@/lib/money";
+import { computeRefund } from "@/lib/refunds";
+import { CancelModal } from "./cancel-modal";
 import { GuestInfoForm } from "./guest-info-form";
 import { OperatorNotesForm } from "./operator-notes-form";
 import { ResendButton } from "./resend-button";
@@ -56,15 +58,21 @@ export default async function ReservationDetailPage({
   const { id } = await params;
   const ctx = await requireOperatorPropertyOrSetup();
 
-  const reservation = await ctx.prisma.reservation.findFirst({
-    where: { id },
-    include: {
-      site: { include: { siteType: true } },
-      guest: true,
-      lineItems: { orderBy: { createdAt: "asc" } },
-      payments: { orderBy: { createdAt: "asc" } },
-    },
-  });
+  const [reservation, organization] = await Promise.all([
+    ctx.prisma.reservation.findFirst({
+      where: { id },
+      include: {
+        site: { include: { siteType: true } },
+        guest: true,
+        lineItems: { orderBy: { createdAt: "asc" } },
+        payments: { orderBy: { createdAt: "asc" } },
+      },
+    }),
+    ctx.prisma.organization.findUnique({
+      where: { id: ctx.organization.id },
+      select: { platformFeeFlatCents: true },
+    }),
+  ]);
   if (!reservation) notFound();
 
   // The operator who created this reservation, if any (manual bookings).
@@ -99,6 +107,30 @@ export default async function ReservationDetailPage({
     reservation.status === "CONFIRMED" ||
     reservation.status === "CHECKED_IN" ||
     reservation.status === "CHECKED_OUT";
+
+  const canCancel =
+    reservation.status !== "CANCELLED" && reservation.status !== "DRAFT";
+
+  const successfulStripePayment = reservation.payments.find(
+    (p) =>
+      p.paymentMethod === "STRIPE" &&
+      p.stripePaymentIntentId &&
+      p.status === "SUCCEEDED",
+  );
+
+  const refundSuggestion = policy
+    ? computeRefund({
+        paidCents: reservation.paidCents,
+        alreadyRefundedCents: reservation.refundedCents,
+        checkInDate: reservation.checkIn,
+        cancellationDate: new Date(
+          new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
+        ),
+        policy,
+        retainPlatformFee: true,
+        platformFeeCents: organization?.platformFeeFlatCents ?? 0,
+      })
+    : null;
 
   return (
     <div className="space-y-6">
@@ -140,7 +172,27 @@ export default async function ReservationDetailPage({
           guestEmail={reservation.guest.email}
           disabled={!canResend}
         />
-        {/* TODO step 4: Cancel reservation. TODO step 6: Change site / dates. */}
+        {canCancel ? (
+          <CancelModal
+            reservationId={reservation.id}
+            confirmationCode={reservation.confirmationCode}
+            guestName={reservation.guest.name}
+            guestEmail={reservation.guest.email}
+            siteLabel={reservation.site.label}
+            checkInDate={checkInDate}
+            checkOutDate={checkOutDate}
+            totalCents={reservation.totalCents}
+            paidCents={reservation.paidCents}
+            alreadyRefundedCents={reservation.refundedCents}
+            suggestedRefundCents={refundSuggestion?.suggestedRefundCents ?? 0}
+            refundReason={
+              refundSuggestion?.reason ??
+              "No cancellation policy snapshot available."
+            }
+            canRefundViaStripe={Boolean(successfulStripePayment)}
+          />
+        ) : null}
+        {/* TODO step 6: Change site / dates. */}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
