@@ -12,6 +12,25 @@ import {
   sendEmail,
 } from "@/lib/email";
 import { getStripe } from "@/lib/stripe";
+import {
+  checkAvailability,
+  type SeasonWindow,
+} from "@/lib/availability";
+import {
+  computeQuote,
+  PricingError,
+  type AddonInput,
+  type ChargeUnit,
+  type LineItem,
+  type ModifierApplies,
+  type ModifierInput,
+  type ModifierType,
+  type RatePlanInput,
+  type StayLine,
+  type TaxAppliesTo,
+  type TaxRateInput,
+} from "@/lib/pricing";
+import type { StayType } from "@prisma/client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -426,4 +445,294 @@ export async function cancelReservationAction(
 function appendNote(prev: string | null, addition: string): string {
   if (!prev) return addition;
   return `${prev}\n${addition}`;
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export type EditReservationInput = {
+  reservationId: string;
+  siteId: string;
+  /** YYYY-MM-DD */
+  from: string;
+  /** YYYY-MM-DD */
+  to: string;
+};
+
+function deriveStayType(stayLines: ReadonlyArray<StayLine>): StayType {
+  const units = new Set(stayLines.map((l) => l.chargeUnit));
+  if (units.has("SEASON")) return "SEASONAL";
+  if (units.has("MONTH")) return "MONTHLY";
+  if (units.has("WEEK")) return "WEEKLY";
+  return "NIGHTLY";
+}
+
+function lineItemTypeFor(
+  kind: LineItem["kind"],
+): "STAY" | "ADDON" | "TAX" {
+  if (kind === "ADDON") return "ADDON";
+  if (kind === "TAX") return "TAX";
+  return "STAY"; // BASE and MODIFIER both roll up into STAY
+}
+
+/**
+ * Move a reservation to a different site, different dates, or both. Re-quotes
+ * with the engine and replaces the line items atomically in a transaction.
+ *
+ * Decision: cancelPolicySnapshot is intentionally NOT updated. Per the
+ * spec, the policy in effect at booking time applies for the life of the
+ * reservation — even if the operator's current Property cancellation
+ * settings have changed since.
+ *
+ * Add-on quantities are preserved as-is (re-priced if their priceCents
+ * changed, but the count operator selected at booking sticks). Manual
+ * overrides (DISCOUNT lines, MANUAL_OVERRIDE STAY lines) from the
+ * original booking are NOT preserved — the recompute starts from a clean
+ * engine quote. If an operator wants to re-apply a discount after moving
+ * dates, they cancel + create a new booking instead. We document this
+ * behavior; an explicit "preserve manual adjustments" UX is a future
+ * phase.
+ *
+ * Status guard: CONFIRMED, CHECKED_IN, CHECKED_OUT only. HELD bookings
+ * shouldn't be edited because they're mid-payment-flow, and CANCELLED is
+ * read-only.
+ */
+export async function editReservationAction(
+  input: EditReservationInput,
+): Promise<ActionResult & { newTotalCents?: number }> {
+  const ctx = await requireOperatorPropertyOrSetup();
+
+  if (!DATE_RE.test(input.from) || !DATE_RE.test(input.to)) {
+    return { ok: false, error: "Invalid dates." };
+  }
+  const checkIn = new Date(`${input.from}T00:00:00.000Z`);
+  const checkOut = new Date(`${input.to}T00:00:00.000Z`);
+  if (checkIn >= checkOut) {
+    return { ok: false, error: "Check-out must be after check-in." };
+  }
+
+  const reservation = await prisma.reservation.findFirst({
+    where: { id: input.reservationId, propertyId: ctx.propertyId },
+    include: { lineItems: true },
+  });
+  if (!reservation) return { ok: false, error: "Reservation not found." };
+
+  if (
+    reservation.status !== "CONFIRMED" &&
+    reservation.status !== "CHECKED_IN" &&
+    reservation.status !== "CHECKED_OUT"
+  ) {
+    return {
+      ok: false,
+      error: `Cannot edit a ${reservation.status.toLowerCase().replace("_", "-")} reservation.`,
+    };
+  }
+
+  // Resolve the new site (must belong to property, active, not soft-deleted).
+  const site = await ctx.prisma.site.findFirst({
+    where: { id: input.siteId, deletedAt: null, active: true },
+    include: { siteType: true },
+  });
+  if (!site || site.siteType.deletedAt != null) {
+    return { ok: false, error: "Site not found or inactive." };
+  }
+
+  const sameSite = site.id === reservation.siteId;
+  const sameDates =
+    reservation.checkIn.getTime() === checkIn.getTime() &&
+    reservation.checkOut.getTime() === checkOut.getTime();
+  if (sameSite && sameDates) {
+    return { ok: false, error: "Nothing changed." };
+  }
+
+  // Preserve add-on selections from the original booking. Quantity is per
+  // line item (we wrote them as quantity:1 always; aggregate by addonId).
+  const existingAddonQty = new Map<string, number>();
+  for (const li of reservation.lineItems) {
+    if (li.type === "ADDON" && li.addonId) {
+      existingAddonQty.set(
+        li.addonId,
+        (existingAddonQty.get(li.addonId) ?? 0) + li.quantity,
+      );
+    }
+  }
+
+  const property = ctx.property;
+  const now = new Date();
+
+  const [ratePlans, modifiers, taxRates, addons, blockingReservations, closedRanges] =
+    await Promise.all([
+      ctx.prisma.ratePlan.findMany({}),
+      ctx.prisma.rateModifier.findMany({}),
+      ctx.prisma.taxRate.findMany({}),
+      ctx.prisma.addon.findMany({ where: { active: true } }),
+      // Exclude the current reservation from the blocking-list — it's the
+      // one we're about to modify, so its old [checkIn, checkOut) shouldn't
+      // count as a self-conflict.
+      ctx.prisma.reservation.findMany({
+        where: {
+          id: { not: reservation.id },
+          siteId: site.id,
+          checkIn: { lt: checkOut },
+          checkOut: { gt: checkIn },
+          OR: [
+            { status: { in: ["CONFIRMED", "CHECKED_IN", "CHECKED_OUT"] } },
+            { AND: [{ status: "HELD" }, { heldUntil: { gt: now } }] },
+          ],
+        },
+        select: { checkIn: true, checkOut: true },
+      }),
+      ctx.prisma.closedDateRange.findMany({
+        where: {
+          startDate: { lte: checkOut },
+          endDate: { gte: checkIn },
+        },
+        select: { startDate: true, endDate: true },
+      }),
+    ]);
+
+  const season: SeasonWindow | null =
+    property.seasonStartMonth != null &&
+    property.seasonStartDay != null &&
+    property.seasonEndMonth != null &&
+    property.seasonEndDay != null
+      ? {
+          startMonth: property.seasonStartMonth,
+          startDay: property.seasonStartDay,
+          endMonth: property.seasonEndMonth,
+          endDay: property.seasonEndDay,
+        }
+      : null;
+
+  const avail = checkAvailability({
+    checkIn,
+    checkOut,
+    reservations: blockingReservations,
+    closedRanges,
+    season,
+  });
+  if (!avail.available) {
+    return {
+      ok: false,
+      error: avail.reasons[0] ?? "Site is not available for those dates.",
+    };
+  }
+
+  // Re-quote.
+  const ratePlanInputs: RatePlanInput[] = ratePlans.map((p) => ({
+    id: p.id,
+    name: p.name,
+    siteTypeId: p.siteTypeId,
+    chargeUnit: p.chargeUnit as ChargeUnit,
+    pricePerUnitCents: p.pricePerUnitCents,
+    minStayDays: p.minStayDays,
+    maxStayDays: p.maxStayDays,
+    effectiveFrom: p.effectiveFrom,
+    effectiveTo: p.effectiveTo,
+    priority: p.priority,
+    active: p.active,
+  }));
+  const modifierInputs: ModifierInput[] = modifiers.map((m) => ({
+    id: m.id,
+    name: m.name,
+    siteTypeId: m.siteTypeId,
+    modifierType: m.modifierType as ModifierType,
+    modifierValue: m.modifierValue,
+    appliesTo: m.appliesTo as ModifierApplies,
+    daysOfWeek: m.daysOfWeek,
+    startDate: m.startDate,
+    endDate: m.endDate,
+    priority: m.priority,
+    active: m.active,
+  }));
+  const taxRateInputs: TaxRateInput[] = taxRates.map((t) => ({
+    id: t.id,
+    name: t.name,
+    basisPoints: t.basisPoints,
+    appliesTo: t.appliesTo as TaxAppliesTo,
+    active: t.active,
+  }));
+  const addonInputs: AddonInput[] = addons.map((a) => ({
+    id: a.id,
+    name: a.name,
+    priceCents: a.priceCents,
+    quantity: existingAddonQty.get(a.id) ?? 0,
+  }));
+
+  let quote;
+  try {
+    quote = computeQuote({
+      checkIn,
+      checkOut,
+      siteTypeId: site.siteTypeId,
+      ratePlans: ratePlanInputs,
+      modifiers: modifierInputs,
+      taxRates: taxRateInputs,
+      addons: addonInputs,
+    });
+  } catch (e) {
+    if (e instanceof PricingError) return { ok: false, error: e.message };
+    throw e;
+  }
+
+  const subtotalCents =
+    quote.baseCents + quote.modifierTotalCents + quote.addonsCents;
+  const stayType = deriveStayType(quote.stayLines);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.reservationLineItem.deleteMany({
+        where: { reservationId: reservation.id },
+      });
+      await tx.reservation.update({
+        where: { id: reservation.id },
+        data: {
+          siteId: site.id,
+          checkIn,
+          checkOut,
+          stayType,
+          subtotalCents,
+          taxCents: quote.taxCents,
+          totalCents: quote.totalCents,
+          // Decision: cancelPolicySnapshot intentionally preserved. The
+          // policy in effect at booking time applies for the life of the
+          // reservation per Phase 4 spec.
+          lineItems: {
+            create: quote.lineItems.map((li) => ({
+              type: lineItemTypeFor(li.kind),
+              description: li.description,
+              quantity: 1,
+              unitPriceCents: li.amountCents,
+              amountCents: li.amountCents,
+              ratePlanId: li.ratePlanId ?? null,
+              addonId: li.addonId ?? null,
+              taxRateId: li.taxRateId ?? null,
+            })),
+          },
+        },
+      });
+    });
+  } catch (err) {
+    // The Postgres exclusion constraint catches races: another booking on
+    // the same site overlapping these dates was created between our
+    // availability check and this update. Surface a clean message rather
+    // than the raw constraint name.
+    const message = err instanceof Error ? err.message : "Update failed.";
+    if (
+      message.includes("exclusion") ||
+      message.includes("conflicting") ||
+      message.includes("constraint")
+    ) {
+      return {
+        ok: false,
+        error:
+          "Site was booked by another reservation between your search and your save. Pick a different site or dates.",
+      };
+    }
+    throw err;
+  }
+
+  revalidatePath(`/admin/reservations/${reservation.id}`);
+  revalidatePath("/admin/reservations");
+
+  return { ok: true, newTotalCents: quote.totalCents };
 }

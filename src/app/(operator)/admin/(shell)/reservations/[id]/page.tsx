@@ -7,9 +7,14 @@ import { PageHeader } from "@/components/admin/page-header";
 import { formatCents } from "@/lib/money";
 import { computeRefund } from "@/lib/refunds";
 import { CancelModal } from "./cancel-modal";
+import { EditModal } from "./edit-modal";
 import { GuestInfoForm } from "./guest-info-form";
 import { OperatorNotesForm } from "./operator-notes-form";
 import { ResendButton } from "./resend-button";
+import type {
+  SerializableModifier,
+  SerializableRatePlan,
+} from "../new/new-reservation-form";
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -75,6 +80,26 @@ export default async function ReservationDetailPage({
   ]);
   if (!reservation) notFound();
 
+  // Fixtures for the edit modal — pulled in parallel even when the modal
+  // won't show, since this runs once per page render and the data's small.
+  const canEdit =
+    reservation.status === "CONFIRMED" ||
+    reservation.status === "CHECKED_IN" ||
+    reservation.status === "CHECKED_OUT";
+
+  const [editSites, editRatePlans, editModifiers, editTaxRates] = canEdit
+    ? await Promise.all([
+        ctx.prisma.site.findMany({
+          where: { deletedAt: null, active: true },
+          include: { siteType: true },
+          orderBy: { label: "asc" },
+        }),
+        ctx.prisma.ratePlan.findMany({}),
+        ctx.prisma.rateModifier.findMany({}),
+        ctx.prisma.taxRate.findMany({}),
+      ])
+    : [[], [], [], []];
+
   // The operator who created this reservation, if any (manual bookings).
   const createdByOperator = reservation.createdByOperatorId
     ? await ctx.prisma.operatorUser.findUnique({
@@ -110,6 +135,29 @@ export default async function ReservationDetailPage({
 
   const canCancel =
     reservation.status !== "CANCELLED" && reservation.status !== "DRAFT";
+
+  // Add-on quantities surfaced from the existing line items so the edit
+  // modal can preserve them through the recompute. ADDON-typed line items
+  // were inserted with quantity:1; aggregate by addonId.
+  const editPreservedAddons = (() => {
+    if (!canEdit || editSites.length === 0) return [];
+    const byId = new Map<string, number>();
+    for (const li of reservation.lineItems) {
+      if (li.type === "ADDON" && li.addonId) {
+        byId.set(li.addonId, (byId.get(li.addonId) ?? 0) + li.quantity);
+      }
+    }
+    if (byId.size === 0) return [];
+    return Array.from(byId.entries()).map(([id, quantity]) => ({
+      id,
+      quantity,
+      // Names + prices are looked up on the server; the modal just needs
+      // the shape AddonInput expects (price doesn't actually matter
+      // because the edit action re-loads add-ons fresh).
+      name: "",
+      priceCents: 0,
+    }));
+  })();
 
   const successfulStripePayment = reservation.payments.find(
     (p) =>
@@ -172,6 +220,64 @@ export default async function ReservationDetailPage({
           guestEmail={reservation.guest.email}
           disabled={!canResend}
         />
+        {canEdit ? (
+          <EditModal
+            reservationId={reservation.id}
+            currentSiteId={reservation.siteId}
+            currentSiteLabel={reservation.site.label}
+            currentFrom={checkInDate}
+            currentTo={checkOutDate}
+            currentTotalCents={reservation.totalCents}
+            paidCents={reservation.paidCents}
+            refundedCents={reservation.refundedCents}
+            preservedAddons={editPreservedAddons}
+            sites={editSites
+              .filter((s) => s.siteType.deletedAt == null)
+              .map((s) => ({
+                id: s.id,
+                label: s.label,
+                siteTypeId: s.siteTypeId,
+                siteTypeName: s.siteType.name,
+              }))}
+            ratePlans={editRatePlans.map(
+              (p): SerializableRatePlan => ({
+                id: p.id,
+                name: p.name,
+                siteTypeId: p.siteTypeId,
+                chargeUnit: p.chargeUnit,
+                pricePerUnitCents: p.pricePerUnitCents,
+                minStayDays: p.minStayDays,
+                maxStayDays: p.maxStayDays,
+                effectiveFrom: p.effectiveFrom?.toISOString() ?? null,
+                effectiveTo: p.effectiveTo?.toISOString() ?? null,
+                priority: p.priority,
+                active: p.active,
+              }),
+            )}
+            modifiers={editModifiers.map(
+              (m): SerializableModifier => ({
+                id: m.id,
+                name: m.name,
+                siteTypeId: m.siteTypeId,
+                modifierType: m.modifierType,
+                modifierValue: m.modifierValue,
+                appliesTo: m.appliesTo,
+                daysOfWeek: m.daysOfWeek,
+                startDate: m.startDate?.toISOString() ?? null,
+                endDate: m.endDate?.toISOString() ?? null,
+                priority: m.priority,
+                active: m.active,
+              }),
+            )}
+            taxRates={editTaxRates.map((t) => ({
+              id: t.id,
+              name: t.name,
+              basisPoints: t.basisPoints,
+              appliesTo: t.appliesTo as "STAY" | "ADDON" | "ALL",
+              active: t.active,
+            }))}
+          />
+        ) : null}
         {canCancel ? (
           <CancelModal
             reservationId={reservation.id}
@@ -192,7 +298,6 @@ export default async function ReservationDetailPage({
             canRefundViaStripe={Boolean(successfulStripePayment)}
           />
         ) : null}
-        {/* TODO step 6: Change site / dates. */}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
