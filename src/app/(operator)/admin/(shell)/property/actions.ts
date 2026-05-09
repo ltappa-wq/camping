@@ -62,6 +62,12 @@ export async function saveProperty(
       description: v.description ?? null,
       rulesText: v.rulesText ?? null,
       directionsText: v.directionsText ?? null,
+      guestModificationCutoffHours: v.guestModificationCutoffHours,
+      reminder7DaysEnabled: v.reminder7DaysEnabled,
+      reminder3DaysEnabled: v.reminder3DaysEnabled,
+      reminderArrivalDayEnabled: v.reminderArrivalDayEnabled,
+      reminderPostStayEnabled: v.reminderPostStayEnabled,
+      checkInInstructions: v.checkInInstructions ?? null,
     },
   });
 

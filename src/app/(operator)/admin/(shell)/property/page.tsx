@@ -31,6 +31,12 @@ export default async function PropertyPage() {
     description: p.description ?? undefined,
     rulesText: p.rulesText ?? undefined,
     directionsText: p.directionsText ?? undefined,
+    guestModificationCutoffHours: p.guestModificationCutoffHours,
+    reminder7DaysEnabled: p.reminder7DaysEnabled,
+    reminder3DaysEnabled: p.reminder3DaysEnabled,
+    reminderArrivalDayEnabled: p.reminderArrivalDayEnabled,
+    reminderPostStayEnabled: p.reminderPostStayEnabled,
+    checkInInstructions: p.checkInInstructions ?? undefined,
   };
 
   return (

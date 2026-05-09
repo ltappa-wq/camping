@@ -22,6 +22,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { saveProperty } from "./actions";
@@ -72,6 +73,7 @@ export function PropertyForm({
   const watchDescription = form.watch("description") ?? "";
   const watchRules = form.watch("rulesText") ?? "";
   const watchDirections = form.watch("directionsText") ?? "";
+  const watchInstructions = form.watch("checkInInstructions") ?? "";
 
   return (
     <Form {...form}>
@@ -536,6 +538,105 @@ export function PropertyForm({
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle>Guest self-service</CardTitle>
+            <CardDescription>
+              How close to check-in guests can modify or cancel their own
+              bookings online.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FormField
+              control={form.control}
+              name="guestModificationCutoffHours"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Modification cutoff (hours)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={720}
+                      {...field}
+                      value={field.value == null ? "" : String(field.value)}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Block modifications and cancellations within this many
+                    hours of check-in. Set to 0 to disable guest self-
+                    service entirely.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Reminder emails</CardTitle>
+            <CardDescription>
+              Toggle the four scheduled emails to your guests.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ReminderToggle
+              control={form.control}
+              name="reminder7DaysEnabled"
+              label="Send 7-day reminder email"
+              description="One week before check-in."
+            />
+            <ReminderToggle
+              control={form.control}
+              name="reminder3DaysEnabled"
+              label="Send 3-day reminder email"
+              description="Three days before check-in. Check-in instructions get extra emphasis here."
+            />
+            <ReminderToggle
+              control={form.control}
+              name="reminderArrivalDayEnabled"
+              label="Send arrival day email"
+              description="Morning of check-in. Last-mile logistics."
+            />
+            <ReminderToggle
+              control={form.control}
+              name="reminderPostStayEnabled"
+              label="Send post-stay thank-you email"
+              description="One day after check-out."
+            />
+
+            <FormField
+              control={form.control}
+              name="checkInInstructions"
+              render={({ field }) => (
+                <FormItem className="border-t pt-4">
+                  <FormLabel>Check-in instructions (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={4}
+                      maxLength={MAX_LONG_TEXT}
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="Parking notes, gate codes, anything guests need to know before arriving."
+                    />
+                  </FormControl>
+                  <FormDescription className="flex justify-between">
+                    <span>
+                      Included in the 7-day, 3-day, and arrival-day emails.
+                    </span>
+                    <span>
+                      {watchInstructions.length} / {MAX_LONG_TEXT}
+                    </span>
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </CardContent>
+        </Card>
+
         <div className="flex justify-end">
           <Button type="submit" disabled={isPending}>
             {isPending ? "Saving…" : "Save changes"}
@@ -543,5 +644,39 @@ export function PropertyForm({
         </div>
       </form>
     </Form>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ReminderToggle({
+  control,
+  name,
+  label,
+  description,
+}: {
+  control: any;
+  name: string;
+  label: string;
+  description: string;
+}) {
+  return (
+    <FormField
+      control={control}
+      name={name}
+      render={({ field }) => (
+        <FormItem className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <FormLabel>{label}</FormLabel>
+            <FormDescription>{description}</FormDescription>
+          </div>
+          <FormControl>
+            <Switch
+              checked={Boolean(field.value)}
+              onCheckedChange={field.onChange}
+            />
+          </FormControl>
+        </FormItem>
+      )}
+    />
   );
 }

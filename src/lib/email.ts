@@ -346,6 +346,144 @@ View: ${v.appUrl}/admin/reservations/${v.reservationId}`;
   };
 }
 
+export type ReminderEmailVars = {
+  guestName: string;
+  propertyName: string;
+  confirmationCode: string;
+  siteLabel: string;
+  siteTypeName: string;
+  checkInDate: string; // YYYY-MM-DD
+  checkOutDate: string;
+  checkInTime: string;
+  checkOutTime: string;
+  nights: number;
+  totalCents: number;
+  /** Operator-supplied check-in instructions; empty string = none. */
+  checkInInstructions: string;
+  /** Pre-formatted property contact lines, "" when none. */
+  propertyContact: string;
+  /** Public URL the guest can revisit (matches manageUrl on the
+   *  confirmation email). */
+  manageUrl: string;
+  /** Optional map link (URL only — emails don't embed images well). */
+  mapImageUrl: string;
+};
+
+export type ReminderKind =
+  | "REMINDER_7_DAYS"
+  | "REMINDER_3_DAYS"
+  | "REMINDER_ARRIVAL_DAY"
+  | "THANK_YOU_POST_STAY";
+
+const REMINDER_HEADLINES: Record<ReminderKind, string> = {
+  REMINDER_7_DAYS: "Your stay is one week away",
+  REMINDER_3_DAYS: "Three days until your stay",
+  REMINDER_ARRIVAL_DAY: "Welcome — we're ready for you today",
+  THANK_YOU_POST_STAY: "Thanks for staying with us",
+};
+
+const REMINDER_INTROS: Record<ReminderKind, string> = {
+  REMINDER_7_DAYS:
+    "Just a heads-up that your visit is coming up next week. Here's what to expect when you arrive.",
+  REMINDER_3_DAYS:
+    "We're getting ready for your visit. Here are the practical details for check-in.",
+  REMINDER_ARRIVAL_DAY:
+    "Today's the day. Here's everything you need for a smooth arrival.",
+  THANK_YOU_POST_STAY:
+    "We hope you had a great stay. Thanks for choosing us — we'd love to see you back.",
+};
+
+/**
+ * Render one of the four scheduled reminder emails. Pure — caller
+ * decides which ReminderKind to render based on the dispatcher output.
+ *
+ * Hardcoded for v1 (no operator template override). Phase 6a's
+ * template-editing UI will wire in operator overrides for these.
+ */
+export function renderReminderEmail(
+  kind: ReminderKind,
+  v: ReminderEmailVars,
+): EmailContent {
+  const headline = REMINDER_HEADLINES[kind];
+  const intro = REMINDER_INTROS[kind];
+
+  const showInstructions =
+    kind !== "THANK_YOU_POST_STAY" && v.checkInInstructions.length > 0;
+
+  const detailsBlock = `  Confirmation: ${v.confirmationCode}
+  Site:         ${v.siteLabel} (${v.siteTypeName})
+  Check-in:     ${v.checkInDate} at ${v.checkInTime}
+  Check-out:    ${v.checkOutDate} at ${v.checkOutTime}
+  Nights:       ${v.nights}
+  Total:        ${formatCents(v.totalCents)}`;
+
+  const instructionsBlock = showInstructions
+    ? `\n\nCheck-in instructions:\n${v.checkInInstructions}`
+    : "";
+
+  const mapBlock = v.mapImageUrl
+    ? `\n\nCampground map: ${v.mapImageUrl}`
+    : "";
+
+  const contactBlock = v.propertyContact
+    ? `\n\n${v.propertyContact}`
+    : "";
+
+  const manageBlock = v.manageUrl
+    ? `\n\nView your booking: ${v.manageUrl}`
+    : "";
+
+  const subject =
+    kind === "THANK_YOU_POST_STAY"
+      ? `${headline} — ${v.propertyName}`
+      : `${headline} — ${v.propertyName} (${v.confirmationCode})`;
+
+  const bodyText = `${headline}.
+
+Hi ${v.guestName},
+
+${intro}
+
+${detailsBlock}${instructionsBlock}${mapBlock}${manageBlock}${contactBlock}
+
+— ${v.propertyName}`;
+
+  const bodyHtml = `<p><strong>${escapeHtml(headline)}.</strong></p>
+<p>Hi ${escapeHtml(v.guestName)},</p>
+<p>${escapeHtml(intro)}</p>
+<table cellpadding="4" style="border-collapse:collapse">
+<tr><td style="color:#666">Confirmation</td><td><strong>${escapeHtml(v.confirmationCode)}</strong></td></tr>
+<tr><td style="color:#666">Site</td><td>${escapeHtml(v.siteLabel)} (${escapeHtml(v.siteTypeName)})</td></tr>
+<tr><td style="color:#666">Check-in</td><td>${escapeHtml(v.checkInDate)} at ${escapeHtml(v.checkInTime)}</td></tr>
+<tr><td style="color:#666">Check-out</td><td>${escapeHtml(v.checkOutDate)} at ${escapeHtml(v.checkOutTime)}</td></tr>
+<tr><td style="color:#666">Nights</td><td>${v.nights}</td></tr>
+<tr><td style="color:#666">Total</td><td>${escapeHtml(formatCents(v.totalCents))}</td></tr>
+</table>
+${
+  showInstructions
+    ? `<p><strong>Check-in instructions:</strong></p><pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(v.checkInInstructions)}</pre>`
+    : ""
+}
+${
+  v.mapImageUrl
+    ? `<p><a href="${escapeHtml(v.mapImageUrl)}">View campground map</a></p>`
+    : ""
+}
+${
+  v.manageUrl
+    ? `<p><a href="${escapeHtml(v.manageUrl)}">View your booking</a></p>`
+    : ""
+}
+${
+  v.propertyContact
+    ? `<p>${escapeHtml(v.propertyContact).replace(/\n/g, "<br>")}</p>`
+    : ""
+}
+<p>— ${escapeHtml(v.propertyName)}</p>`;
+
+  return { subject, bodyHtml, bodyText };
+}
+
 export type CancellationEmailVars = {
   guestName: string;
   confirmationCode: string;

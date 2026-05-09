@@ -81,6 +81,16 @@ export const propertyFormSchema = z
     description: optionalLong,
     rulesText: optionalLong,
     directionsText: optionalLong,
+
+    // Phase 5 — guest self-service
+    guestModificationCutoffHours: z.coerce.number().int().min(0).max(720),
+
+    // Phase 5 — reminder emails
+    reminder7DaysEnabled: z.coerce.boolean(),
+    reminder3DaysEnabled: z.coerce.boolean(),
+    reminderArrivalDayEnabled: z.coerce.boolean(),
+    reminderPostStayEnabled: z.coerce.boolean(),
+    checkInInstructions: optionalLong,
   })
   .refine(
     (v) =>
