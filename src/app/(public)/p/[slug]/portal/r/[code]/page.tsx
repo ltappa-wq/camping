@@ -86,7 +86,10 @@ export default async function GuestReservationDetailPage({
 
   const organization = await prisma.organization.findUnique({
     where: { id: reservation.property.organizationId },
-    select: { platformFeeFlatCents: true },
+    select: {
+      platformFeeFlatCents: true,
+      customerPaysPlatformFee: true,
+    },
   });
 
   const checkInDate = reservation.checkIn.toISOString().slice(0, 10);
@@ -127,6 +130,13 @@ export default async function GuestReservationDetailPage({
       new Date().getUTCDate(),
     ),
   );
+  // Decision: retainPlatformFee mirrors customerPaysPlatformFee.
+  // If the customer paid the fee on top at booking (visible line
+  // item), retaining on cancel is consistent with what they agreed
+  // to. If the operator absorbed the fee (the customer never saw it),
+  // retaining means deducting a fee they never paid separately —
+  // surprising and unfair. Same rule on the server (cancel/actions.ts).
+  const retainPlatformFee = organization?.customerPaysPlatformFee ?? false;
   const refundPreview = canCancel
     ? computeRefund({
         paidCents: reservation.paidCents,
@@ -134,7 +144,7 @@ export default async function GuestReservationDetailPage({
         checkInDate: reservation.checkIn,
         cancellationDate: todayMidnight,
         policy: effectivePolicy,
-        retainPlatformFee: true,
+        retainPlatformFee,
         platformFeeCents: organization?.platformFeeFlatCents ?? 0,
       })
     : null;

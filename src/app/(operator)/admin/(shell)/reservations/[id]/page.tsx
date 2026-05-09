@@ -75,7 +75,10 @@ export default async function ReservationDetailPage({
     }),
     ctx.prisma.organization.findUnique({
       where: { id: ctx.organization.id },
-      select: { platformFeeFlatCents: true },
+      select: {
+        platformFeeFlatCents: true,
+        customerPaysPlatformFee: true,
+      },
     }),
   ]);
   if (!reservation) notFound();
@@ -166,6 +169,10 @@ export default async function ReservationDetailPage({
       p.status === "SUCCEEDED",
   );
 
+  // See guest-side cancel/actions.ts for the rationale: retain only when
+  // the customer paid the fee on top at booking. With operator-absorbed
+  // fees, deducting the fee from the refund surprises both sides.
+  const retainPlatformFee = organization?.customerPaysPlatformFee ?? false;
   const refundSuggestion = policy
     ? computeRefund({
         paidCents: reservation.paidCents,
@@ -175,7 +182,7 @@ export default async function ReservationDetailPage({
           new Date().toISOString().slice(0, 10) + "T00:00:00.000Z",
         ),
         policy,
-        retainPlatformFee: true,
+        retainPlatformFee,
         platformFeeCents: organization?.platformFeeFlatCents ?? 0,
       })
     : null;

@@ -75,6 +75,7 @@ export async function cancelReservationByGuestAction(
           organization: {
             select: {
               platformFeeFlatCents: true,
+              customerPaysPlatformFee: true,
               operatorUsers: {
                 where: { role: "OWNER" },
                 orderBy: { createdAt: "asc" },
@@ -124,13 +125,19 @@ export async function cancelReservationByGuestAction(
       cancelPartialRefundPct: property.cancelPartialRefundPct,
     };
 
+  // Decision: retain the platform fee on refund only when the customer
+  // explicitly paid it on top at booking. With customerPaysPlatformFee
+  // = false (operator absorbed the fee), the customer never saw a $3
+  // line item and shouldn't have $3 deducted from their refund. This
+  // matches what guests expect ("half" means half, not "half minus
+  // unseen processing fee"). Same rule on the portal preview.
   const refundResult = computeRefund({
     paidCents: reservation.paidCents,
     alreadyRefundedCents: reservation.refundedCents,
     checkInDate: reservation.checkIn,
     cancellationDate: todayMidnightUtc(),
     policy,
-    retainPlatformFee: true,
+    retainPlatformFee: property.organization.customerPaysPlatformFee,
     platformFeeCents: property.organization.platformFeeFlatCents,
   });
   const refundCents = refundResult.suggestedRefundCents;
