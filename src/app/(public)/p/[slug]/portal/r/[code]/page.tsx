@@ -195,6 +195,13 @@ export default async function GuestReservationDetailPage({
           </div>
           {canCancel && refundPreview ? (
             <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Button asChild variant="outline" size="sm">
+                <Link
+                  href={`/p/${slug}/portal/r/${reservation.confirmationCode}/modify`}
+                >
+                  Modify booking
+                </Link>
+              </Button>
               <CancelButton
                 slug={slug}
                 code={reservation.confirmationCode}
