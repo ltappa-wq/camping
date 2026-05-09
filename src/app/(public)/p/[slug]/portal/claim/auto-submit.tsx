@@ -10,6 +10,14 @@ import { claimAction } from "./actions";
  * the guest in the portal without an extra click. The visible button is
  * the no-JS fallback — also acts as the rendered state for the brief
  * moment between mount and submit.
+ *
+ * Important: we ref-gate the submit because React Strict Mode in dev
+ * double-invokes effects. Without the gate, two POSTs fire — the first
+ * consumes the token and signs the guest in, but the browser receives
+ * both 302 responses and navigates to whichever lands last. The second
+ * POST always errors (already-consumed token) and bounces to the
+ * sign-in error page, so without this guard the guest sees "expired"
+ * even on a successful first try.
  */
 export function ClaimAutoSubmit({
   token,
@@ -19,8 +27,11 @@ export function ClaimAutoSubmit({
   slug: string;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
+  const submittedRef = useRef(false);
 
   useEffect(() => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
     formRef.current?.requestSubmit();
   }, []);
 
