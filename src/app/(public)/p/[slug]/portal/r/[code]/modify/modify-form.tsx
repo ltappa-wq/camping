@@ -156,6 +156,9 @@ export function ModifyForm(props: Props) {
         today.getUTCDate(),
       ),
     );
+    // See actions.ts: retainPlatformFee=false for modifications. The
+    // platform fee was settled on the original booking; we don't
+    // double-charge guests for shortening their stay.
     return computeModificationRefund({
       oldCheckIn: new Date(`${props.currentCheckIn}T00:00:00.000Z`),
       oldCheckOut: new Date(`${props.currentCheckOut}T00:00:00.000Z`),
@@ -165,7 +168,7 @@ export function ModifyForm(props: Props) {
       newTotalCents: newTotal,
       cancellationDate: todayMid,
       policy: props.policy,
-      retainPlatformFee: true,
+      retainPlatformFee: false,
       platformFeeCents: props.platformFeeCents,
       paidCents: props.currentRemainingPaid,
       alreadyRefundedCents: 0,

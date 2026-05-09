@@ -357,6 +357,13 @@ export async function applyModificationAction(
         cancelPartialRefundDays: property.cancelPartialRefundDays,
         cancelPartialRefundPct: property.cancelPartialRefundPct,
       };
+    // Decision: retainPlatformFee is FALSE for modifications. The
+    // platform already collected its flat fee from the original
+    // booking transaction; charging another $3 to shorten a stay
+    // would effectively make guests pay a second platform fee for
+    // one booking. The operator keeps the remaining nights' revenue;
+    // no second transaction to fee. Cancellations still retain
+    // because the booking is fully gone — different semantics.
     const result = computeModificationRefund({
       oldCheckIn: reservation.checkIn,
       oldCheckOut: reservation.checkOut,
@@ -366,7 +373,7 @@ export async function applyModificationAction(
       newTotalCents: quote.totalCents,
       cancellationDate: todayMidnightUtc(),
       policy,
-      retainPlatformFee: true,
+      retainPlatformFee: false,
       platformFeeCents: property.organization.platformFeeFlatCents,
       paidCents: reservation.paidCents,
       alreadyRefundedCents: reservation.refundedCents,
