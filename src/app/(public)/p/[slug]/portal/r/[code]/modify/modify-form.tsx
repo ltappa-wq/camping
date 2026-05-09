@@ -77,7 +77,6 @@ export function ModifyForm(props: Props) {
   const [checkIn, setCheckIn] = useState(props.currentCheckIn);
   const [checkOut, setCheckOut] = useState(props.currentCheckOut);
   const [error, setError] = useState<string | null>(null);
-  const [upchargeNotice, setUpchargeNotice] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const selectedSite = useMemo(
@@ -187,7 +186,6 @@ export function ModifyForm(props: Props) {
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setUpchargeNotice(null);
 
     if (noChanges) {
       setError("Pick a different site or dates first.");
@@ -206,16 +204,19 @@ export function ModifyForm(props: Props) {
         newCheckOut: checkOut,
         newSiteId: siteId,
       });
-      if ("ok" in res && res.ok) {
-        router.push(`/p/${props.slug}/portal/r/${props.code}`);
-        router.refresh();
+      if (!res.ok) {
+        setError(res.error);
         return;
       }
-      if ("needsUpcharge" in res) {
-        setUpchargeNotice(res.upchargeCents);
+      if (res.kind === "checkout") {
+        // Upcharge — guest pays the difference via Stripe. Modification
+        // applies after the webhook lands.
+        window.location.href = res.redirectUrl;
         return;
       }
-      setError(res.error);
+      // Equal or refund — applied immediately.
+      router.push(`/p/${props.slug}/portal/r/${props.code}`);
+      router.refresh();
     });
   }
 
@@ -223,9 +224,7 @@ export function ModifyForm(props: Props) {
     isPending ||
     noChanges ||
     !datesValid ||
-    Boolean(newQuote && "error" in newQuote) ||
-    (diff?.kind === "upcharge" && !upchargeNotice);
-  const upchargeBranch = diff?.kind === "upcharge";
+    Boolean(newQuote && "error" in newQuote);
 
   return (
     <form onSubmit={onSubmit} className="space-y-6">
@@ -330,17 +329,12 @@ export function ModifyForm(props: Props) {
               </p>
             ) : null}
 
-            {upchargeBranch ? (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs">
-                <p className="font-medium text-amber-900 dark:text-amber-200">
-                  Online payment for upgrades is coming soon.
-                </p>
-                <p className="mt-1 text-muted-foreground">
-                  This change costs more than your current booking. To pay
-                  the difference, please contact the property — they can
-                  process the change manually for now.
-                </p>
-              </div>
+            {diff?.kind === "upcharge" ? (
+              <p className="text-xs text-muted-foreground">
+                Confirming will take you to a secure payment page to pay the
+                difference. Your booking only updates after the payment
+                completes.
+              </p>
             ) : null}
           </div>
         )}
@@ -349,20 +343,18 @@ export function ModifyForm(props: Props) {
       {error ? (
         <p className="text-sm text-destructive">{error}</p>
       ) : null}
-      {upchargeNotice != null ? (
-        <p className="text-sm text-amber-700 dark:text-amber-300">
-          This change requires a payment of {formatCents(upchargeNotice)} —
-          please contact the property directly for now.
-        </p>
-      ) : null}
 
       <div className="flex gap-2">
         <Button type="submit" disabled={submitDisabled}>
           {isPending
-            ? "Applying…"
-            : diff?.kind === "refund"
-              ? `Confirm — receive ${refundPreview ? formatCents(refundPreview.refundCents) : ""} back`
-              : "Confirm changes"}
+            ? diff?.kind === "upcharge"
+              ? "Redirecting…"
+              : "Applying…"
+            : diff?.kind === "upcharge"
+              ? `Pay ${formatCents(diff.upchargeCents)} to confirm`
+              : diff?.kind === "refund"
+                ? `Confirm — receive ${refundPreview ? formatCents(refundPreview.refundCents) : ""} back`
+                : "Confirm changes"}
         </Button>
         <Button
           type="button"

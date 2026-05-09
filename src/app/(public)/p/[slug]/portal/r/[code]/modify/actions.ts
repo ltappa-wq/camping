@@ -29,6 +29,10 @@ import {
   computeModificationRefund,
   type ModificationPolicy,
 } from "@/lib/booking-modification";
+import {
+  renderModificationGuestEmail,
+  renderModificationOperatorEmail,
+} from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
 import type { StayType } from "@prisma/client";
 
@@ -46,9 +50,9 @@ export type ApplyModificationInput = {
 };
 
 export type ApplyModificationResult =
-  | { ok: true; refundCents: number }
-  | { ok: false; error: string }
-  | { ok: false; needsUpcharge: true; upchargeCents: number };
+  | { ok: true; kind: "applied"; refundCents: number }
+  | { ok: true; kind: "checkout"; redirectUrl: string; upchargeCents: number }
+  | { ok: false; error: string };
 
 function parsePolicy(json: unknown): ModificationPolicy | null {
   if (!json || typeof json !== "object") return null;
@@ -131,6 +135,7 @@ export async function applyModificationAction(
         include: {
           organization: {
             select: {
+              stripeAccountId: true,
               platformFeeFlatCents: true,
               operatorUsers: {
                 where: { role: "OWNER" },
@@ -324,14 +329,24 @@ export async function applyModificationAction(
   });
 
   if (diff.kind === "upcharge") {
-    // Step 6 wires up Stripe Checkout for this branch. For now signal
-    // the UI cleanly so it can show "Coming soon" and the operator can
-    // handle upcharges manually if the guest contacts them.
-    return {
-      ok: false,
-      needsUpcharge: true,
+    return upchargePathway({
+      reservation,
+      property,
+      newSite,
+      newCheckIn,
+      newCheckOut,
+      newCheckInIso: input.newCheckIn,
+      newCheckOutIso: input.newCheckOut,
       upchargeCents: diff.upchargeCents,
-    };
+      newQuoteTotalCents: quote.totalCents,
+      slug: input.slug,
+      code: input.code,
+      guestEmail: guest.email,
+      siteLabel: newSite.label,
+      reservationCheckIn: reservation.checkIn,
+      reservationCheckOut: reservation.checkOut,
+      reservationTotalCents: reservation.totalCents,
+    });
   }
 
   let refundCents = 0;
@@ -480,7 +495,7 @@ export async function applyModificationAction(
   const newNights = Math.round(
     (newCheckOut.getTime() - newCheckIn.getTime()) / ONE_DAY_MS,
   );
-  const guestContent = renderModificationGuest({
+  const guestContent = renderModificationGuestEmail({
     guestName: guest.name,
     propertyName: property.name,
     confirmationCode: reservation.confirmationCode,
@@ -495,11 +510,12 @@ export async function applyModificationAction(
     newNights,
     newTotalCents: quote.totalCents,
     refundCents,
+    upchargeCents: 0,
     propertyContact,
   });
   const operatorRecipient =
     property.email ?? property.organization.operatorUsers[0]?.email ?? null;
-  const operatorContent = renderModificationOperator({
+  const operatorContent = renderModificationOperatorEmail({
     propertyName: property.name,
     confirmationCode: reservation.confirmationCode,
     guestName: guest.name,
@@ -542,116 +558,172 @@ export async function applyModificationAction(
 
   revalidatePath(`/p/${input.slug}/portal`);
   revalidatePath(`/p/${input.slug}/portal/r/${input.code}`);
-  return { ok: true, refundCents };
+  return { ok: true, kind: "applied", refundCents };
 }
 
-// ---- Modification email rendering ----
-
-function fmtCents(c: number): string {
-  return `$${(c / 100).toFixed(2)}`;
-}
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function renderModificationGuest(v: {
-  guestName: string;
-  propertyName: string;
-  confirmationCode: string;
-  oldSiteLabel: string;
-  oldCheckIn: string;
-  oldCheckOut: string;
-  oldNights: number;
-  oldTotalCents: number;
-  newSiteLabel: string;
-  newCheckIn: string;
-  newCheckOut: string;
-  newNights: number;
-  newTotalCents: number;
-  refundCents: number;
-  propertyContact: string;
-}): { subject: string; bodyText: string; bodyHtml: string } {
-  const refundLine =
-    v.refundCents > 0
-      ? `A refund of ${fmtCents(v.refundCents)} is on its way back to your card. Refunds typically take 5–10 business days.`
-      : "No refund applies for this change.";
-
-  const bodyText = `Hi ${v.guestName},
-
-Your booking at ${v.propertyName} has been updated.
-
-  Confirmation: ${v.confirmationCode}
-
-  Was:  Site ${v.oldSiteLabel} · ${v.oldCheckIn} → ${v.oldCheckOut} · ${v.oldNights} night${v.oldNights === 1 ? "" : "s"} · ${fmtCents(v.oldTotalCents)}
-  Now:  Site ${v.newSiteLabel} · ${v.newCheckIn} → ${v.newCheckOut} · ${v.newNights} night${v.newNights === 1 ? "" : "s"} · ${fmtCents(v.newTotalCents)}
-
-${refundLine}
-
-If you didn't make this change or have questions, reply to this email${
-    v.propertyContact ? ` or reach the property:\n\n${v.propertyContact}` : "."
+/**
+ * Upcharge branch — guest needs to pay the difference. We:
+ *   1. Persist a ReservationModification row in PENDING_PAYMENT state
+ *      with a snapshot of prev + next.
+ *   2. Create a Stripe Checkout session for just the upcharge amount,
+ *      tagged with metadata.type='modification' so the webhook routes
+ *      it correctly.
+ *   3. Return the Checkout URL; the form redirects the browser.
+ *
+ * The original Reservation is NOT modified yet — the webhook flips
+ * everything on payment success. If the guest abandons, the sweeper
+ * cron marks the modification ABANDONED after 30 minutes.
+ *
+ * Race window: between modification creation and webhook, another
+ * booking could grab the new site. The webhook re-checks availability
+ * and refunds gracefully if so. Documented edge case for v1.
+ *
+ * Decision: platform fee on the upcharge mirrors initial bookings —
+ * platformFeeFlatCents capped at the upcharge amount. No customer-
+ * pays-fee gross-up on the upcharge for v1; the operator absorbs
+ * the modification fee. The customer-pays-fee logic on the booking
+ * itself is preserved (the original total already includes it).
+ */
+async function upchargePathway(args: {
+  reservation: { id: string; siteId: string };
+  property: {
+    id: string;
+    slug: string;
+    name: string;
+    currency: string;
+    organization: {
+      stripeAccountId: string | null;
+      platformFeeFlatCents: number;
+    };
+  };
+  newSite: { id: string; label: string };
+  newCheckIn: Date;
+  newCheckOut: Date;
+  newCheckInIso: string;
+  newCheckOutIso: string;
+  upchargeCents: number;
+  newQuoteTotalCents: number;
+  slug: string;
+  code: string;
+  guestEmail: string;
+  siteLabel: string;
+  reservationCheckIn: Date;
+  reservationCheckOut: Date;
+  reservationTotalCents: number;
+}): Promise<ApplyModificationResult> {
+  const orgStripeAccount = args.property.organization.stripeAccountId;
+  if (!orgStripeAccount) {
+    return {
+      ok: false,
+      error:
+        "This property isn't set up to accept online payments for upgrades. Please contact the property to make this change.",
+    };
   }
 
-— ${v.propertyName}`;
+  const platformFeeCents = Math.min(
+    Math.max(0, args.property.organization.platformFeeFlatCents),
+    args.upchargeCents,
+  );
 
-  const bodyHtml = `<p>Hi ${escapeHtml(v.guestName)},</p>
-<p>Your booking at <strong>${escapeHtml(v.propertyName)}</strong> has been updated.</p>
-<p><strong>Confirmation:</strong> ${escapeHtml(v.confirmationCode)}</p>
-<table cellpadding="4" style="border-collapse:collapse">
-<tr><td style="color:#666">Was</td><td>Site ${escapeHtml(v.oldSiteLabel)} · ${escapeHtml(v.oldCheckIn)} → ${escapeHtml(v.oldCheckOut)} · ${v.oldNights}n · ${fmtCents(v.oldTotalCents)}</td></tr>
-<tr><td style="color:#666">Now</td><td>Site ${escapeHtml(v.newSiteLabel)} · ${escapeHtml(v.newCheckIn)} → ${escapeHtml(v.newCheckOut)} · ${v.newNights}n · ${fmtCents(v.newTotalCents)}</td></tr>
-</table>
-<p>${escapeHtml(refundLine)}</p>
-<p>— ${escapeHtml(v.propertyName)}</p>`;
+  const modification = await prisma.reservationModification.create({
+    data: {
+      reservationId: args.reservation.id,
+      prevSiteId: args.reservation.siteId,
+      prevCheckIn: args.reservationCheckIn,
+      prevCheckOut: args.reservationCheckOut,
+      prevTotalCents: args.reservationTotalCents,
+      nextSiteId: args.newSite.id,
+      nextCheckIn: args.newCheckIn,
+      nextCheckOut: args.newCheckOut,
+      nextTotalCents: args.newQuoteTotalCents,
+      upchargeCents: args.upchargeCents,
+      refundCents: 0,
+      status: "PENDING_PAYMENT",
+    },
+  });
+
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const currency = (args.property.currency ?? "USD").toLowerCase();
+
+  let session;
+  try {
+    session = await getStripe().checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency,
+            product_data: {
+              name: `Booking change — ${args.property.name}`,
+              description: `${args.code}: Site ${args.siteLabel} · ${args.newCheckInIso} → ${args.newCheckOutIso}`,
+            },
+            unit_amount: args.upchargeCents,
+          },
+          quantity: 1,
+        },
+      ],
+      customer_email: args.guestEmail,
+      payment_intent_data: {
+        application_fee_amount:
+          platformFeeCents > 0 ? platformFeeCents : undefined,
+        transfer_data: { destination: orgStripeAccount },
+        metadata: {
+          type: "modification",
+          modificationId: modification.id,
+          reservationId: args.reservation.id,
+        },
+      },
+      metadata: {
+        type: "modification",
+        modificationId: modification.id,
+        reservationId: args.reservation.id,
+        propertyId: args.property.id,
+        slug: args.slug,
+        stripeAccountId: orgStripeAccount,
+        applicationFeeCents: String(platformFeeCents),
+      },
+      success_url: `${baseUrl}/p/${args.slug}/portal/r/${args.code}?modified=1`,
+      cancel_url: `${baseUrl}/p/${args.slug}/portal/r/${args.code}/modify`,
+      expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 min
+    });
+  } catch (err) {
+    // If Stripe rejects (e.g., connected account in trouble), don't leave
+    // a phantom PENDING_PAYMENT row — flip it ABANDONED so the sweeper
+    // doesn't double-handle it.
+    await prisma.reservationModification.update({
+      where: { id: modification.id },
+      data: { status: "ABANDONED", abandonedAt: new Date() },
+    });
+    const message = err instanceof Error ? err.message : "Stripe error";
+    return {
+      ok: false,
+      error: `Could not start checkout: ${message}. Please try again or contact the property.`,
+    };
+  }
+
+  if (!session.url) {
+    await prisma.reservationModification.update({
+      where: { id: modification.id },
+      data: { status: "ABANDONED", abandonedAt: new Date() },
+    });
+    return {
+      ok: false,
+      error: "Stripe did not return a checkout URL. Please try again.",
+    };
+  }
+
+  await prisma.reservationModification.update({
+    where: { id: modification.id },
+    data: { stripeCheckoutSessionId: session.id },
+  });
 
   return {
-    subject: `Booking updated: ${v.propertyName} — ${v.confirmationCode}`,
-    bodyHtml,
-    bodyText,
+    ok: true,
+    kind: "checkout",
+    redirectUrl: session.url,
+    upchargeCents: args.upchargeCents,
   };
 }
 
-function renderModificationOperator(v: {
-  propertyName: string;
-  confirmationCode: string;
-  guestName: string;
-  guestEmail: string;
-  oldSiteLabel: string;
-  oldCheckIn: string;
-  oldCheckOut: string;
-  oldTotalCents: number;
-  newSiteLabel: string;
-  newCheckIn: string;
-  newCheckOut: string;
-  newTotalCents: number;
-  refundCents: number;
-  upchargeCents: number;
-  appUrl: string;
-  reservationId: string;
-}): { subject: string; bodyText: string; bodyHtml: string } {
-  const moneyLine =
-    v.refundCents > 0
-      ? `Refund issued: ${fmtCents(v.refundCents)} (per cancellation policy applied per removed night)`
-      : v.upchargeCents > 0
-        ? `Upcharge collected: ${fmtCents(v.upchargeCents)}`
-        : "No money changed hands.";
-
-  const bodyText = `Guest modification at ${v.propertyName}.
-
-  Confirmation: ${v.confirmationCode}
-  Guest: ${v.guestName} (${v.guestEmail})
-
-  Was:  Site ${v.oldSiteLabel} · ${v.oldCheckIn} → ${v.oldCheckOut} · ${fmtCents(v.oldTotalCents)}
-  Now:  Site ${v.newSiteLabel} · ${v.newCheckIn} → ${v.newCheckOut} · ${fmtCents(v.newTotalCents)}
-
-${moneyLine}
-
-View: ${v.appUrl}/admin/reservations/${v.reservationId}`;
-
-  const bodyHtml = `<pre style="font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; margin: 0;">${escapeHtml(bodyText)}</pre>`;
-
-  return {
-    subject: `Guest modified: ${v.guestName} — ${v.confirmationCode}`,
-    bodyHtml,
-    bodyText,
-  };
-}

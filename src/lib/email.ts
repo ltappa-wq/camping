@@ -227,6 +227,125 @@ If you didn't request this email, you can safely ignore it.
   return { subject, bodyHtml, bodyText };
 }
 
+export type ModificationGuestVars = {
+  guestName: string;
+  propertyName: string;
+  confirmationCode: string;
+  oldSiteLabel: string;
+  oldCheckIn: string; // YYYY-MM-DD
+  oldCheckOut: string;
+  oldNights: number;
+  oldTotalCents: number;
+  newSiteLabel: string;
+  newCheckIn: string;
+  newCheckOut: string;
+  newNights: number;
+  newTotalCents: number;
+  refundCents: number;
+  upchargeCents: number;
+  /** Pre-formatted property contact lines, "" when none. */
+  propertyContact: string;
+};
+
+/**
+ * Render the guest-facing modification confirmation email. Covers all
+ * three branches — refund, upcharge, and equal — by reading
+ * refundCents/upchargeCents and rendering the appropriate money line.
+ */
+export function renderModificationGuestEmail(
+  v: ModificationGuestVars,
+): EmailContent {
+  const moneyLine =
+    v.refundCents > 0
+      ? `A refund of ${formatCents(v.refundCents)} is on its way back to your card. Refunds typically take 5–10 business days.`
+      : v.upchargeCents > 0
+        ? `Your additional charge of ${formatCents(v.upchargeCents)} has been processed.`
+        : "No money changed hands for this update.";
+
+  const bodyText = `Hi ${v.guestName},
+
+Your booking at ${v.propertyName} has been updated.
+
+  Confirmation: ${v.confirmationCode}
+
+  Was:  Site ${v.oldSiteLabel} · ${v.oldCheckIn} → ${v.oldCheckOut} · ${v.oldNights} night${v.oldNights === 1 ? "" : "s"} · ${formatCents(v.oldTotalCents)}
+  Now:  Site ${v.newSiteLabel} · ${v.newCheckIn} → ${v.newCheckOut} · ${v.newNights} night${v.newNights === 1 ? "" : "s"} · ${formatCents(v.newTotalCents)}
+
+${moneyLine}
+
+If you didn't make this change or have questions, reply to this email${
+    v.propertyContact ? ` or reach the property:\n\n${v.propertyContact}` : "."
+  }
+
+— ${v.propertyName}`;
+
+  const bodyHtml = `<p>Hi ${escapeHtml(v.guestName)},</p>
+<p>Your booking at <strong>${escapeHtml(v.propertyName)}</strong> has been updated.</p>
+<p><strong>Confirmation:</strong> ${escapeHtml(v.confirmationCode)}</p>
+<table cellpadding="4" style="border-collapse:collapse">
+<tr><td style="color:#666">Was</td><td>Site ${escapeHtml(v.oldSiteLabel)} · ${escapeHtml(v.oldCheckIn)} → ${escapeHtml(v.oldCheckOut)} · ${v.oldNights}n · ${formatCents(v.oldTotalCents)}</td></tr>
+<tr><td style="color:#666">Now</td><td>Site ${escapeHtml(v.newSiteLabel)} · ${escapeHtml(v.newCheckIn)} → ${escapeHtml(v.newCheckOut)} · ${v.newNights}n · ${formatCents(v.newTotalCents)}</td></tr>
+</table>
+<p>${escapeHtml(moneyLine)}</p>
+<p>— ${escapeHtml(v.propertyName)}</p>`;
+
+  return {
+    subject: `Booking updated: ${v.propertyName} — ${v.confirmationCode}`,
+    bodyHtml,
+    bodyText,
+  };
+}
+
+export type ModificationOperatorVars = {
+  propertyName: string;
+  confirmationCode: string;
+  guestName: string;
+  guestEmail: string;
+  oldSiteLabel: string;
+  oldCheckIn: string;
+  oldCheckOut: string;
+  oldTotalCents: number;
+  newSiteLabel: string;
+  newCheckIn: string;
+  newCheckOut: string;
+  newTotalCents: number;
+  refundCents: number;
+  upchargeCents: number;
+  appUrl: string;
+  reservationId: string;
+};
+
+export function renderModificationOperatorEmail(
+  v: ModificationOperatorVars,
+): EmailContent {
+  const moneyLine =
+    v.refundCents > 0
+      ? `Refund issued: ${formatCents(v.refundCents)} (per cancellation policy applied per removed night)`
+      : v.upchargeCents > 0
+        ? `Upcharge collected: ${formatCents(v.upchargeCents)}`
+        : "No money changed hands.";
+
+  const bodyText = `Guest modification at ${v.propertyName}.
+
+  Confirmation: ${v.confirmationCode}
+  Guest: ${v.guestName} (${v.guestEmail})
+
+  Was:  Site ${v.oldSiteLabel} · ${v.oldCheckIn} → ${v.oldCheckOut} · ${formatCents(v.oldTotalCents)}
+  Now:  Site ${v.newSiteLabel} · ${v.newCheckIn} → ${v.newCheckOut} · ${formatCents(v.newTotalCents)}
+
+${moneyLine}
+
+View: ${v.appUrl}/admin/reservations/${v.reservationId}`;
+
+  const bodyHtml = `<pre style="font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; margin: 0;">${escapeHtml(bodyText)}</pre>`;
+
+  return {
+    subject: `Guest modified: ${v.guestName} — ${v.confirmationCode}`,
+    bodyHtml,
+    bodyText,
+  };
+}
+
 export type CancellationEmailVars = {
   guestName: string;
   confirmationCode: string;

@@ -1,11 +1,22 @@
 import { prisma } from "@/lib/prisma";
 
+const THIRTY_MINUTES_MS = 30 * 60 * 1000;
+
 /**
- * Vercel Cron sweeper. Cancels Reservations whose HELD lock has expired so
- * the underlying Site frees up for other guests. Vercel Cron sends
- * `Authorization: Bearer ${CRON_SECRET}` — anything else is rejected.
+ * Vercel Cron sweeper. Two duties:
+ *   1. Cancel Reservations whose HELD lock has expired so the underlying
+ *      Site frees up for other guests.
+ *   2. Mark stale ReservationModifications (PENDING_PAYMENT for > 30 min)
+ *      as ABANDONED. The original Reservation is unchanged — guest just
+ *      walked away from the upcharge Checkout. The modification's Stripe
+ *      Checkout session has its own 30-minute expiry, but the
+ *      checkout.session.expired webhook isn't strictly guaranteed; this
+ *      sweeper is the floor.
  *
- * Idempotent by design: a sweep that finds nothing returns { swept: 0 }.
+ * Auth: `Authorization: Bearer ${CRON_SECRET}`. Anything else rejected.
+ *
+ * Idempotent by design: a sweep that finds nothing returns
+ * { swept: { holds: 0, modifications: 0 } }.
  *
  * Configured in vercel.json with `*\/5 * * * *` (every 5 minutes). Vercel
  * Cron only runs on the Production environment, not preview deploys.
@@ -22,18 +33,38 @@ export async function GET(req: Request): Promise<Response> {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const result = await prisma.reservation.updateMany({
-    where: {
-      status: "HELD",
-      heldUntil: { lt: new Date() },
-    },
-    data: {
-      status: "CANCELLED",
-      cancellationReason: "Hold expired",
-      cancelledAt: new Date(),
-      heldUntil: null,
+  const now = new Date();
+  const modificationCutoff = new Date(now.getTime() - THIRTY_MINUTES_MS);
+
+  const [holds, modifications] = await Promise.all([
+    prisma.reservation.updateMany({
+      where: {
+        status: "HELD",
+        heldUntil: { lt: now },
+      },
+      data: {
+        status: "CANCELLED",
+        cancellationReason: "Hold expired",
+        cancelledAt: now,
+        heldUntil: null,
+      },
+    }),
+    prisma.reservationModification.updateMany({
+      where: {
+        status: "PENDING_PAYMENT",
+        createdAt: { lt: modificationCutoff },
+      },
+      data: {
+        status: "ABANDONED",
+        abandonedAt: now,
+      },
+    }),
+  ]);
+
+  return Response.json({
+    swept: {
+      holds: holds.count,
+      modifications: modifications.count,
     },
   });
-
-  return Response.json({ swept: result.count });
 }
