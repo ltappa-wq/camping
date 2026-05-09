@@ -201,3 +201,26 @@ export async function getGuestSession(): Promise<GuestSession | null> {
     propertySlug: session.propertySlug,
   };
 }
+
+// `next/navigation` exports redirect; importing it here keeps the
+// require helper next to the session reader so callers don't have to
+// remember the redirect target shape.
+import { redirect } from "next/navigation";
+
+/**
+ * Require a valid guest session whose propertySlug matches the page's
+ * slug. No session, or a session for a different property, redirects
+ * to that property's sign-in page. Cross-property redirects matter
+ * because a guest signed in to property A clicking a link to property
+ * B's portal should land on B's sign-in, not see A's reservations.
+ */
+export async function requireGuestSession(slug: string): Promise<GuestSession> {
+  const session = await getGuestSession();
+  if (!session) {
+    redirect(`/p/${slug}/portal/sign-in`);
+  }
+  if (session.propertySlug !== slug) {
+    redirect(`/p/${slug}/portal/sign-in`);
+  }
+  return session;
+}
