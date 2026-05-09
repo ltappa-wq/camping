@@ -79,6 +79,18 @@ enum EmailTemplateType {
   BALANCE_DUE
   CANCELLATION
   GUEST_PROFILE_CLAIM   // magic-link to upgrade guest checkout into saved profile
+  REMINDER_7_DAYS         // 7 days before arrival
+  REMINDER_3_DAYS         // 3 days before arrival
+  REMINDER_ARRIVAL_DAY    // morning of check-in
+  THANK_YOU_POST_STAY     // 1 day after check-out
+  MODIFICATION_GUEST      // guest-facing confirmation after a successful modification
+  MODIFICATION_OPERATOR   // operator alert on guest-initiated modification
+}
+
+enum ModificationStatus {
+  PENDING_PAYMENT
+  COMPLETED
+  ABANDONED
 }
 
 enum EmailStatus {
@@ -223,6 +235,21 @@ model Property {
   cancelPartialRefundDays Int @default(7)  // ≥ this many but < cancelFullRefundDays → partial refund
   cancelPartialRefundPct  Int @default(50) // partial refund percent (0–100)
   // Inside cancelPartialRefundDays → no refund
+
+  // Phase 5: guest self-service.
+  // Block guest modifications + cancellations within this window of check-in.
+  // 0 disables guest self-service entirely (operator must handle changes).
+  guestModificationCutoffHours Int @default(24)
+
+  // Phase 5: reminder email toggles. Each independently switchable.
+  reminder7DaysEnabled       Boolean @default(true)
+  reminder3DaysEnabled       Boolean @default(true)
+  reminderArrivalDayEnabled  Boolean @default(true)
+  reminderPostStayEnabled    Boolean @default(true)
+
+  // Phase 5: operator-supplied check-in instructions injected into reminder
+  // emails. Caps at ~5000 chars in the UI; column is unbounded TEXT.
+  checkInInstructions String? @db.Text
 
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -505,6 +532,10 @@ model Reservation {
   // operator-only Guest.notes).
   guestNotes              String?       @db.Text
 
+  // Phase 5: count of guest-initiated modifications. No cap; just tracks
+  // how many times a stay has been changed for support diagnostics.
+  modificationCount Int @default(0)
+
   // Soft hold expiry while in HELD status during checkout
   heldUntil        DateTime?
 
@@ -524,11 +555,58 @@ model Reservation {
   lineItems        ReservationLineItem[]
   payments         Payment[]
   emailLogs        EmailLog[]
+  modifications    ReservationModification[]
 
   @@index([propertyId, status])
   @@index([siteId, checkIn, checkOut])
   @@index([guestId])
   @@index([confirmationCode])
+}
+
+// Phase 5: pending guest-initiated modifications. Refund-side mods apply
+// immediately and skip this table; upcharge-side mods land here as
+// PENDING_PAYMENT until the Stripe Checkout webhook flips them to
+// COMPLETED. The sweeper cron flips stale PENDING_PAYMENT rows to
+// ABANDONED after 30 minutes.
+model ReservationModification {
+  id                          String              @id @default(cuid())
+  reservationId               String
+  reservation                 Reservation         @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  // Snapshot of the reservation state at modification-creation time.
+  // Used to detect drift (operator edited the booking concurrently) and
+  // for any future rollback diagnostics.
+  prevSiteId                  String
+  prevCheckIn                 DateTime            @db.Date
+  prevCheckOut                DateTime            @db.Date
+  prevTotalCents              Int
+
+  // Target state — applied to the Reservation when the modification
+  // completes (immediately for refunds, on webhook for upcharges).
+  nextSiteId                  String
+  nextCheckIn                 DateTime            @db.Date
+  nextCheckOut                DateTime            @db.Date
+  nextTotalCents              Int
+
+  // Money math at creation time. Exactly one of these is non-zero, or
+  // both are zero (a same-total swap).
+  upchargeCents               Int                 @default(0)
+  refundCents                 Int                 @default(0)
+
+  // Stripe identifiers — only populated for upcharge-side mods. The
+  // Checkout Session is created against the platform account (destination
+  // charge), same pattern as initial bookings.
+  stripeCheckoutSessionId     String?             @unique
+  stripePaymentIntentId       String?             @unique
+
+  status                      ModificationStatus  @default(PENDING_PAYMENT)
+
+  createdAt                   DateTime            @default(now())
+  completedAt                 DateTime?
+  abandonedAt                 DateTime?
+
+  @@index([reservationId])
+  @@index([status, createdAt])
 }
 
 model ReservationLineItem {
