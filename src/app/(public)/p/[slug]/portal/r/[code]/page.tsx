@@ -11,6 +11,7 @@ import { PublicHeader } from "../../../_components/public-header";
 import { getPropertyBySlug } from "../../../_lib/property";
 import { guestSignOutAction } from "../../actions";
 import { CancelButton } from "./cancel/cancel-button";
+import { ResendButton } from "./resend/resend-button";
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -104,6 +105,12 @@ export default async function GuestReservationDetailPage({
   });
   const canCancel =
     reservation.status === "CONFIRMED" && cutoffResult.allowed;
+  // Resend works regardless of cutoff — guests sometimes need their
+  // confirmation email after they've checked in.
+  const canResend =
+    reservation.status === "CONFIRMED" ||
+    reservation.status === "CHECKED_IN" ||
+    reservation.status === "CHECKED_OUT";
 
   // Same computeRefund call the cancel server action runs — kept in sync
   // by reusing the same input shape. Used only to populate the modal's
@@ -212,8 +219,24 @@ export default async function GuestReservationDetailPage({
                 checkInDate={checkInDate}
                 checkOutDate={checkOutDate}
               />
+              {canResend ? (
+                <ResendButton
+                  slug={slug}
+                  code={reservation.confirmationCode}
+                  email={session.email}
+                />
+              ) : null}
             </div>
-          ) : reservation.status === "CONFIRMED" && !cutoffResult.allowed ? (
+          ) : canResend ? (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <ResendButton
+                slug={slug}
+                code={reservation.confirmationCode}
+                email={session.email}
+              />
+            </div>
+          ) : null}
+          {reservation.status === "CONFIRMED" && !cutoffResult.allowed ? (
             <p className="mt-4 text-xs text-muted-foreground">
               {"reason" in cutoffResult ? cutoffResult.reason : ""}
             </p>

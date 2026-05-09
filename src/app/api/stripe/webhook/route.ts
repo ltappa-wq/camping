@@ -764,13 +764,19 @@ async function refundAndAbandon(args: {
     propertyId: string;
     guest: { name: string; email: string };
   };
-  property: { name: string; email: string | null; phone: string | null };
+  property: {
+    name: string;
+    email: string | null;
+    phone: string | null;
+    organization: { operatorUsers: { email: string }[] };
+  };
   reason: string;
 }): Promise<void> {
   console.warn(
     `Modification ${args.modification.id} can't be applied: ${args.reason}`,
   );
 
+  let refundOk = false;
   if (args.paymentIntentId) {
     try {
       await getStripe().refunds.create({
@@ -782,6 +788,7 @@ async function refundAndAbandon(args: {
           source: "modification-rollback",
         },
       });
+      refundOk = true;
     } catch (err) {
       console.error(
         `Refund failed for modification ${args.modification.id}; operator must resolve manually:`,
@@ -798,7 +805,10 @@ async function refundAndAbandon(args: {
     },
   });
 
-  // Best-effort guest email — let them know the upcharge is being refunded.
+  // Guest email — what happened, refund status if applicable.
+  const refundLine = refundOk
+    ? "Your payment for this change has been refunded. Refunds typically take 5–10 business days to appear on your statement."
+    : "We were unable to automatically refund your payment. The property will reach out to you directly to resolve.";
   const guestContent = {
     subject: `Booking change couldn't be completed — ${args.reservation.confirmationCode}`,
     bodyText: `Hi ${args.reservation.guest.name},
@@ -807,7 +817,7 @@ We weren't able to apply the change you requested for booking ${args.reservation
 
 Reason: ${args.reason}
 
-Your payment for this change has been refunded. Refunds typically take 5–10 business days to appear on your statement. Your original booking is unchanged.
+${refundLine} Your original booking is unchanged.
 
 If you'd still like to make a change, please reply to this email or contact the property directly${
       args.property.email ? ` at ${args.property.email}` : ""
@@ -817,17 +827,61 @@ If you'd still like to make a change, please reply to this email or contact the 
     bodyHtml: `<p>Hi ${args.reservation.guest.name},</p>
 <p>We weren't able to apply the change you requested for booking <strong>${args.reservation.confirmationCode}</strong> at ${args.property.name}.</p>
 <p><em>Reason:</em> ${args.reason}</p>
-<p>Your payment for this change has been refunded. Refunds typically take 5–10 business days to appear on your statement. Your original booking is unchanged.</p>
+<p>${refundLine} Your original booking is unchanged.</p>
 <p>If you'd still like to make a change, please reply to this email or contact the property directly.</p>
 <p>— ${args.property.name}</p>`,
   };
-  await dispatchEmail({
-    propertyId: args.reservation.propertyId,
-    reservationId: args.reservation.id,
-    type: "MODIFICATION_GUEST",
-    to: args.reservation.guest.email,
-    content: guestContent,
-  });
+
+  // Operator email — they need to know a guest tried to upgrade and
+  // the system couldn't accommodate it. Especially important when the
+  // refund failed — manual intervention required.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const operatorRecipient =
+    args.property.email ??
+    args.property.organization.operatorUsers[0]?.email ??
+    null;
+  const operatorBody = `Heads up: a guest's self-service modification couldn't be applied.
+
+  Reservation: ${args.reservation.confirmationCode}
+  Guest: ${args.reservation.guest.name} (${args.reservation.guest.email})
+  Reason: ${args.reason}
+
+${
+  refundOk
+    ? "The upcharge has been refunded automatically (reverse_transfer; the platform fee on the upcharge stays with the platform). No further action needed unless the guest reaches out."
+    : "The automatic refund FAILED. The guest's upcharge needs to be refunded manually via the Stripe dashboard or by contacting Stripe support. The guest has been informed that the property will reach out."
+}
+
+The original booking is unchanged.
+
+View: ${appUrl}/admin/reservations/${args.reservation.id}`;
+  const operatorContent = {
+    subject: `Guest modification rolled back: ${args.reservation.guest.name} — ${args.reservation.confirmationCode}${refundOk ? "" : " (REFUND FAILED)"}`,
+    bodyText: operatorBody,
+    bodyHtml: `<pre style="font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; margin: 0;">${operatorBody.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`,
+  };
+
+  const dispatches: Promise<unknown>[] = [
+    dispatchEmail({
+      propertyId: args.reservation.propertyId,
+      reservationId: args.reservation.id,
+      type: "MODIFICATION_GUEST",
+      to: args.reservation.guest.email,
+      content: guestContent,
+    }),
+  ];
+  if (operatorRecipient) {
+    dispatches.push(
+      dispatchEmail({
+        propertyId: args.reservation.propertyId,
+        reservationId: args.reservation.id,
+        type: "MODIFICATION_OPERATOR",
+        to: operatorRecipient,
+        content: operatorContent,
+      }),
+    );
+  }
+  await Promise.allSettled(dispatches);
 }
 
 function deriveStayType(stayLines: ReadonlyArray<StayLine>): StayType {
