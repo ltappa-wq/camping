@@ -131,6 +131,50 @@ export function formatTotalForEmail(totalCents: number): string {
   return formatCents(totalCents);
 }
 
+export type GuestMagicLinkVars = {
+  propertyName: string;
+  /** "Sign in to view your booking" vs. "Save your booking for next time" — caller picks. */
+  intentLabel: string;
+  /** One-paragraph context line shown below the headline. */
+  intro: string;
+  /** Fully-qualified URL the guest clicks to sign in. */
+  link: string;
+  /** Human-readable expiry, e.g. "1 hour" or "30 days". */
+  expiresIn: string;
+};
+
+/**
+ * Renders the guest sign-in / profile-claim email. One template covers
+ * both flows — the difference is the intent label and intro paragraph.
+ * Hardcoded for v1 (no operator EmailTemplate override path).
+ */
+export function renderGuestMagicLinkEmail(
+  v: GuestMagicLinkVars,
+): EmailContent {
+  const subject = `${v.intentLabel} — ${v.propertyName}`;
+  const bodyText = `${v.intentLabel}
+
+${v.intro}
+
+Sign-in link (good for ${v.expiresIn}):
+${v.link}
+
+If you didn't request this email, you can safely ignore it.
+
+— ${v.propertyName}`;
+
+  const bodyHtml = `<p><strong>${escapeHtml(v.intentLabel)}</strong></p>
+<p>${escapeHtml(v.intro)}</p>
+<p><a href="${escapeHtml(v.link)}">Click here to continue</a></p>
+<p style="color:#666;font-size:12px">
+  This link is good for ${escapeHtml(v.expiresIn)}. If you didn't request
+  this email, you can safely ignore it.
+</p>
+<p>— ${escapeHtml(v.propertyName)}</p>`;
+
+  return { subject, bodyHtml, bodyText };
+}
+
 export type CancellationEmailVars = {
   guestName: string;
   confirmationCode: string;
