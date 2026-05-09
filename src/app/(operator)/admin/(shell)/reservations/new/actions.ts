@@ -6,8 +6,13 @@ import { revalidatePath } from "next/cache";
 
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { prisma } from "@/lib/prisma";
-import { formatTotalForEmail, renderEmail } from "@/lib/email";
+import {
+  buildGuestPortalSection,
+  formatTotalForEmail,
+  renderEmail,
+} from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { issueGuestProfileClaimLink } from "@/lib/guest-magic-link";
 import {
   type ManualOverride,
   type ManualPayment,
@@ -313,6 +318,20 @@ export async function createManualReservationAction(
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
+    const claimLink = guest.profileClaimedAt
+      ? null
+      : await issueGuestProfileClaimLink({
+          propertyId: property.id,
+          email: guest.email,
+        });
+    const portalSection = buildGuestPortalSection({
+      appUrl,
+      slug: property.slug,
+      code: confirmationCode,
+      alreadyClaimed: guest.profileClaimedAt !== null,
+      claimToken: claimLink?.token,
+    });
+
     const content = renderEmail(
       "RESERVATION_CONFIRMATION",
       {
@@ -331,6 +350,8 @@ export async function createManualReservationAction(
           ? "Complimentary"
           : formatTotalForEmail(payload.totalCents),
         manageUrl: `${appUrl}/p/${property.slug}/booking/${confirmationCode}`,
+        portalSectionText: portalSection.text,
+        portalSectionHtml: portalSection.html,
       },
       override && override.active ? override : null,
     );

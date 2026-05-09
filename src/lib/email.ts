@@ -21,6 +21,10 @@ export type EmailVars = {
   /** Public-facing URL the guest can revisit to see their booking
    *  (state machine identical to the post-checkout page). */
   manageUrl: string;
+  /** Phase 5 portal section, pre-rendered to text. Empty string when
+   *  there's nothing to show (e.g. claimed-guest with no working URL). */
+  portalSectionText: string;
+  portalSectionHtml: string;
 };
 
 export type EmailContent = {
@@ -50,6 +54,8 @@ Your booking at {{propertyName}} is confirmed.
 
 View or manage your booking: {{manageUrl}}
 
+{{portalSectionText}}
+
 If you need to make changes, reply to this email.
 
 — {{propertyName}}`,
@@ -63,6 +69,7 @@ If you need to make changes, reply to this email.
 <tr><td style="color:#666">Total</td><td><strong>{{totalFormatted}}</strong></td></tr>
 </table>
 <p><a href="{{manageUrl}}">View or manage your booking</a></p>
+{{portalSectionHtml}}
 <p>If you need to make changes, reply to this email.</p>
 <p>— {{propertyName}}</p>`,
   },
@@ -93,6 +100,8 @@ export function renderEmail(
     totalFormatted: vars.totalFormatted,
     totalCents: String(vars.totalCents),
     manageUrl: vars.manageUrl,
+    portalSectionText: vars.portalSectionText,
+    portalSectionHtml: vars.portalSectionHtml,
   };
   return {
     subject: fill(tpl.subject, stringVars),
@@ -129,6 +138,49 @@ export async function sendEmail(args: {
 /** Convenience: format a cents total into the variable-ready string. */
 export function formatTotalForEmail(totalCents: number): string {
   return formatCents(totalCents);
+}
+
+/**
+ * Build the portal section that goes into the guest confirmation
+ * email. Two flavors:
+ *   - Unclaimed guest: "Save your info for next time" + a 30-day
+ *     magic-link to /portal/claim?token=…. Clicking signs them in
+ *     and stamps profileClaimedAt.
+ *   - Claimed guest: just a "View your booking online" link to
+ *     /portal/r/[code]. They'll be sign-in-prompted if their session
+ *     expired.
+ *
+ * Caller is responsible for issuing the magic-link token (when
+ * needed) and passing it in. Pure rendering helper — no DB writes.
+ */
+export function buildGuestPortalSection(args: {
+  appUrl: string;
+  slug: string;
+  code: string;
+  alreadyClaimed: boolean;
+  /** Required when alreadyClaimed is false. */
+  claimToken?: string;
+}): { text: string; html: string } {
+  if (args.alreadyClaimed) {
+    const url = `${args.appUrl}/p/${args.slug}/portal/r/${args.code}`;
+    return {
+      text: `View your booking online: ${url}`,
+      html: `<p><a href="${escapeHtml(url)}">View your booking online</a></p>`,
+    };
+  }
+
+  if (!args.claimToken) {
+    // Defensive — shouldn't happen, but better to render nothing than a
+    // half-built link.
+    return { text: "", html: "" };
+  }
+
+  const url = `${args.appUrl}/p/${args.slug}/portal/claim?token=${encodeURIComponent(args.claimToken)}`;
+  return {
+    text: `Save your info for next time: ${url}\nClick the link to view your booking online and check in faster on future trips. The link is good for 30 days.`,
+    html: `<p style="margin-top:16px"><strong>Save your info for next time</strong></p>
+<p><a href="${escapeHtml(url)}">View your booking online</a> — click to save your details so future bookings auto-fill. Good for 30 days.</p>`,
+  };
 }
 
 export type GuestMagicLinkVars = {

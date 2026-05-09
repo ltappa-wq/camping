@@ -5,11 +5,13 @@ import type { Guest } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
 import {
+  buildGuestPortalSection,
   formatTotalForEmail,
   renderEmail,
   renderOperatorBookingNotification,
 } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { issueGuestProfileClaimLink } from "@/lib/guest-magic-link";
 
 export async function POST(req: Request) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -161,6 +163,24 @@ async function handleCheckoutCompleted(
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
+  // Phase 5: portal section. If the guest hasn't claimed their profile
+  // yet, mint a fresh 30-day claim token and link them straight to the
+  // claim flow. If they have, link to the bare detail page; the portal
+  // sign-in flow handles re-auth if their browser session expired.
+  const claimLink = reservation.guest.profileClaimedAt
+    ? null
+    : await issueGuestProfileClaimLink({
+        propertyId: reservation.propertyId,
+        email: reservation.guest.email,
+      });
+  const portalSection = buildGuestPortalSection({
+    appUrl,
+    slug: reservation.property.slug,
+    code: reservation.confirmationCode,
+    alreadyClaimed: reservation.guest.profileClaimedAt !== null,
+    claimToken: claimLink?.token,
+  });
+
   const guestContent = renderEmail(
     "RESERVATION_CONFIRMATION",
     {
@@ -177,6 +197,8 @@ async function handleCheckoutCompleted(
       totalCents: reservation.totalCents,
       totalFormatted: formatTotalForEmail(reservation.totalCents),
       manageUrl: `${appUrl}/p/${reservation.property.slug}/booking/${reservation.confirmationCode}`,
+      portalSectionText: portalSection.text,
+      portalSectionHtml: portalSection.html,
     },
     override && override.active ? override : null,
   );

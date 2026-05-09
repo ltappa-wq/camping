@@ -5,11 +5,13 @@ import { revalidatePath } from "next/cache";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { prisma } from "@/lib/prisma";
 import {
+  buildGuestPortalSection,
   formatTotalForEmail,
   renderCancellationEmail,
   renderEmail,
 } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { issueGuestProfileClaimLink } from "@/lib/guest-magic-link";
 import { getStripe } from "@/lib/stripe";
 import {
   checkAvailability,
@@ -156,7 +158,9 @@ export async function resendConfirmationAction(
     include: {
       property: true,
       site: { include: { siteType: true } },
-      guest: { select: { email: true, name: true } },
+      guest: {
+        select: { email: true, name: true, profileClaimedAt: true },
+      },
     },
   });
   if (!reservation) return { ok: false, error: "Reservation not found." };
@@ -189,6 +193,20 @@ export async function resendConfirmationAction(
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
+  const claimLink = reservation.guest.profileClaimedAt
+    ? null
+    : await issueGuestProfileClaimLink({
+        propertyId: reservation.propertyId,
+        email: reservation.guest.email,
+      });
+  const portalSection = buildGuestPortalSection({
+    appUrl,
+    slug: reservation.property.slug,
+    code: reservation.confirmationCode,
+    alreadyClaimed: reservation.guest.profileClaimedAt !== null,
+    claimToken: claimLink?.token,
+  });
+
   const content = renderEmail(
     "RESERVATION_CONFIRMATION",
     {
@@ -205,6 +223,8 @@ export async function resendConfirmationAction(
       totalCents: reservation.totalCents,
       totalFormatted: formatTotalForEmail(reservation.totalCents),
       manageUrl: `${appUrl}/p/${reservation.property.slug}/booking/${reservation.confirmationCode}`,
+      portalSectionText: portalSection.text,
+      portalSectionHtml: portalSection.html,
     },
     override && override.active ? override : null,
   );
