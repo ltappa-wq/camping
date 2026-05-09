@@ -5,9 +5,12 @@ import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/money";
 import { requireGuestSession } from "@/lib/guest-auth";
+import { computeRefund } from "@/lib/refunds";
+import { checkModificationCutoff } from "@/lib/booking-modification";
 import { PublicHeader } from "../../../_components/public-header";
 import { getPropertyBySlug } from "../../../_lib/property";
 import { guestSignOutAction } from "../../actions";
+import { CancelButton } from "./cancel/cancel-button";
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -67,9 +70,23 @@ export default async function GuestReservationDetailPage({
     include: {
       site: { include: { siteType: true } },
       lineItems: { orderBy: { createdAt: "asc" } },
+      property: {
+        select: {
+          guestModificationCutoffHours: true,
+          cancelFullRefundDays: true,
+          cancelPartialRefundDays: true,
+          cancelPartialRefundPct: true,
+          organizationId: true,
+        },
+      },
     },
   });
   if (!reservation) notFound();
+
+  const organization = await prisma.organization.findUnique({
+    where: { id: reservation.property.organizationId },
+    select: { platformFeeFlatCents: true },
+  });
 
   const checkInDate = reservation.checkIn.toISOString().slice(0, 10);
   const checkOutDate = reservation.checkOut.toISOString().slice(0, 10);
@@ -78,6 +95,42 @@ export default async function GuestReservationDetailPage({
       ONE_DAY_MS,
   );
   const policy = parseCancelPolicy(reservation.cancelPolicySnapshot);
+
+  // ---- Cancel button gating ----
+  const cutoffResult = checkModificationCutoff({
+    guestModificationCutoffHours:
+      reservation.property.guestModificationCutoffHours,
+    checkInAt: reservation.checkIn,
+  });
+  const canCancel =
+    reservation.status === "CONFIRMED" && cutoffResult.allowed;
+
+  // Same computeRefund call the cancel server action runs — kept in sync
+  // by reusing the same input shape. Used only to populate the modal's
+  // suggested-refund display; server re-computes on confirm.
+  const effectivePolicy = policy ?? {
+    cancelFullRefundDays: reservation.property.cancelFullRefundDays,
+    cancelPartialRefundDays: reservation.property.cancelPartialRefundDays,
+    cancelPartialRefundPct: reservation.property.cancelPartialRefundPct,
+  };
+  const todayMidnight = new Date(
+    Date.UTC(
+      new Date().getUTCFullYear(),
+      new Date().getUTCMonth(),
+      new Date().getUTCDate(),
+    ),
+  );
+  const refundPreview = canCancel
+    ? computeRefund({
+        paidCents: reservation.paidCents,
+        alreadyRefundedCents: reservation.refundedCents,
+        checkInDate: reservation.checkIn,
+        cancellationDate: todayMidnight,
+        policy: effectivePolicy,
+        retainPlatformFee: true,
+        platformFeeCents: organization?.platformFeeFlatCents ?? 0,
+      })
+    : null;
 
   const groupedLineItems = {
     STAY: reservation.lineItems.filter((li) => li.type === "STAY"),
@@ -140,6 +193,24 @@ export default async function GuestReservationDetailPage({
               {reservation.status.replace("_", " ")}
             </span>
           </div>
+          {canCancel && refundPreview ? (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <CancelButton
+                slug={slug}
+                code={reservation.confirmationCode}
+                suggestedRefundCents={refundPreview.suggestedRefundCents}
+                refundReason={refundPreview.reason}
+                paidCents={reservation.paidCents}
+                propertyName={property.name}
+                checkInDate={checkInDate}
+                checkOutDate={checkOutDate}
+              />
+            </div>
+          ) : reservation.status === "CONFIRMED" && !cutoffResult.allowed ? (
+            <p className="mt-4 text-xs text-muted-foreground">
+              {"reason" in cutoffResult ? cutoffResult.reason : ""}
+            </p>
+          ) : null}
         </header>
 
         <Section title="Booking details">
