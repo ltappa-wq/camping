@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Layers, MoreHorizontal, Plus } from "lucide-react";
 
@@ -218,6 +219,13 @@ export function SitesList({
                         <DropdownMenuItem onClick={() => openEdit(row)}>
                           Edit
                         </DropdownMenuItem>
+                        {!row.archived ? (
+                          <DropdownMenuItem asChild>
+                            <Link href={`/admin/sites/${row.id}/photos`}>
+                              Photos
+                            </Link>
+                          </DropdownMenuItem>
+                        ) : null}
                         {!row.archived ? (
                           <DropdownMenuItem onClick={() => onToggle(row)}>
                             {row.active ? "Deactivate" : "Activate"}

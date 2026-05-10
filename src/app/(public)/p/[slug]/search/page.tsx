@@ -56,6 +56,7 @@ type SiteOffer =
       label: string;
       siteTypeName: string;
       tags: string[];
+      thumbnailUrl: string | null;
       quote: Quote;
     }
   | {
@@ -131,7 +132,11 @@ export default async function SearchPage({
           deletedAt: null,
           active: true,
         },
-        include: { siteType: true },
+        include: {
+          siteType: true,
+          // Just the first image for the search-card thumbnail.
+          images: { orderBy: { order: "asc" }, take: 1 },
+        },
       }),
       prisma.ratePlan.findMany({ where: { propertyId: property.id } }),
       prisma.rateModifier.findMany({ where: { propertyId: property.id } }),
@@ -279,6 +284,7 @@ export default async function SearchPage({
           label: site.label,
           siteTypeName: st.name,
           tags: site.tags,
+          thumbnailUrl: site.images[0]?.url ?? null,
           quote,
         };
       } catch (e) {
@@ -358,6 +364,16 @@ export default async function SearchPage({
                 className="rounded-md border bg-card p-4 shadow-sm"
               >
                 <div className="flex items-start justify-between gap-4">
+                  {o.thumbnailUrl ? (
+                    <div className="aspect-[4/3] w-24 shrink-0 overflow-hidden rounded-md bg-muted">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={o.thumbnailUrl}
+                        alt={`Site ${o.label}`}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  ) : null}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="font-medium">Site {o.label}</h3>

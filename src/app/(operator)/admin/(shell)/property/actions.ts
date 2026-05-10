@@ -6,12 +6,14 @@ import { prisma } from "@/lib/prisma";
 import { requireOperatorProperty } from "@/lib/auth-property";
 import {
   deletePropertyMapByUrl,
+  deletePropertyPhotoByUrl,
   uploadPropertyMap,
+  uploadPropertyPhoto,
 } from "@/lib/storage";
 import { propertyFormSchema, type PropertyFormParsed } from "./schema";
 
 export type ActionResult =
-  | { ok: true; mapImageUrl?: string | null }
+  | { ok: true; mapImageUrl?: string | null; heroImageUrl?: string | null }
   | { ok: false; error: string };
 
 /**
@@ -35,6 +37,7 @@ export async function saveProperty(
   const v = parsed.data;
 
   const previousMapUrl = ctx.property.mapImageUrl;
+  const previousHeroUrl = ctx.property.heroImageUrl;
 
   await prisma.property.update({
     where: { id: ctx.propertyId },
@@ -50,6 +53,7 @@ export async function saveProperty(
       logoUrl: v.logoUrl ?? null,
       primaryColor: v.primaryColor ?? null,
       mapImageUrl: v.mapImageUrl ?? null,
+      heroImageUrl: v.heroImageUrl ?? null,
       seasonStartMonth: v.seasonStartMonth ?? null,
       seasonStartDay: v.seasonStartDay ?? null,
       seasonEndMonth: v.seasonEndMonth ?? null,
@@ -82,9 +86,21 @@ export async function saveProperty(
       // Non-fatal: orphaned objects can be cleaned up later.
     }
   }
+  if (previousHeroUrl && previousHeroUrl !== v.heroImageUrl) {
+    try {
+      await deletePropertyPhotoByUrl(previousHeroUrl);
+    } catch {
+      // Non-fatal: orphaned objects can be cleaned up later.
+    }
+  }
 
   revalidatePath("/admin/property");
-  return { ok: true, mapImageUrl: v.mapImageUrl ?? null };
+  revalidatePath(`/p/${ctx.property.slug}`);
+  return {
+    ok: true,
+    mapImageUrl: v.mapImageUrl ?? null,
+    heroImageUrl: v.heroImageUrl ?? null,
+  };
 }
 
 /**
@@ -114,6 +130,39 @@ export async function uploadMapImageAction(
       bytes,
     });
     return { ok: true, mapImageUrl: result.publicUrl };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Upload failed";
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * Upload a hero image to Supabase. Same pattern as map upload — returns
+ * the public URL the form places back into RHF state. Persisted on
+ * the next saveProperty call.
+ */
+export async function uploadHeroImageAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const ctx = await requireOperatorProperty();
+  if (!ctx.property || !ctx.propertyId) {
+    return { ok: false, error: "No property" };
+  }
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "No file uploaded" };
+  }
+
+  try {
+    const bytes = await file.arrayBuffer();
+    const result = await uploadPropertyPhoto({
+      propertyId: ctx.propertyId,
+      filename: file.name,
+      contentType: file.type,
+      bytes,
+    });
+    return { ok: true, heroImageUrl: result.publicUrl };
   } catch (e) {
     const message = e instanceof Error ? e.message : "Upload failed";
     return { ok: false, error: message };

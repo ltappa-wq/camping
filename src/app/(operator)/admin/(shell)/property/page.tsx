@@ -19,6 +19,7 @@ export default async function PropertyPage() {
     logoUrl: p.logoUrl ?? undefined,
     primaryColor: p.primaryColor ?? undefined,
     mapImageUrl: p.mapImageUrl ?? null,
+    heroImageUrl: p.heroImageUrl ?? null,
     seasonStartMonth: p.seasonStartMonth,
     seasonStartDay: p.seasonStartDay,
     seasonEndMonth: p.seasonEndMonth,

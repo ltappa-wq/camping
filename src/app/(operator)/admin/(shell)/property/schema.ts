@@ -64,6 +64,14 @@ export const propertyFormSchema = z
       .nullable()
       .transform((v) => (v ? v : null)),
 
+    // Hero image follows the same upload-then-persist pattern as the map.
+    heroImageUrl: z
+      .string()
+      .url()
+      .optional()
+      .nullable()
+      .transform((v) => (v ? v : null)),
+
     // Operating Hours
     seasonStartMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
     seasonStartDay: z.coerce.number().int().min(1).max(31).nullable().optional(),

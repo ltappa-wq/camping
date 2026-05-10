@@ -26,6 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { saveProperty } from "./actions";
+import { HeroImageUpload } from "./hero-image-upload";
 import { MapImageUpload } from "./map-image-upload";
 import { propertyFormSchema, type PropertyFormValues } from "./schema";
 
@@ -231,6 +232,44 @@ export function PropertyForm({
                       {...field}
                       value={field.value ?? ""}
                       placeholder="#1f6feb"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Hero image</CardTitle>
+            <CardDescription>
+              The big banner shown at the top of your public landing page.
+              Manage your gallery on the{" "}
+              <a
+                href="/admin/property/photos"
+                className="underline hover:text-foreground"
+              >
+                Photos
+              </a>{" "}
+              page.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FormField
+              control={form.control}
+              name="heroImageUrl"
+              render={({ field }) => (
+                <FormItem>
+                  <FormControl>
+                    <HeroImageUpload
+                      value={field.value ?? null}
+                      onChange={(url) =>
+                        form.setValue("heroImageUrl", url, {
+                          shouldDirty: true,
+                        })
+                      }
                     />
                   </FormControl>
                   <FormMessage />
