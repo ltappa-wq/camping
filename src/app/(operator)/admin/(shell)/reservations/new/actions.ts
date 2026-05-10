@@ -12,6 +12,7 @@ import {
   renderEmail,
 } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { loadEmailTemplateOverride } from "@/lib/email-templates/load";
 import { issueGuestProfileClaimLink } from "@/lib/guest-magic-link";
 import {
   type ManualOverride,
@@ -307,14 +308,10 @@ export async function createManualReservationAction(
       (checkOut.getTime() - checkIn.getTime()) / 86_400_000,
     );
 
-    const override = await ctx.prisma.emailTemplate.findUnique({
-      where: {
-        propertyId_type: {
-          propertyId: property.id,
-          type: "RESERVATION_CONFIRMATION",
-        },
-      },
-    });
+    const override = await loadEmailTemplateOverride(
+      property.id,
+      "RESERVATION_CONFIRMATION",
+    );
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
@@ -353,7 +350,7 @@ export async function createManualReservationAction(
         portalSectionText: portalSection.text,
         portalSectionHtml: portalSection.html,
       },
-      override && override.active ? override : null,
+      override,
     );
 
     await dispatchEmail({

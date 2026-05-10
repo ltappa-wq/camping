@@ -5,6 +5,7 @@ import {
   type ReminderKind,
 } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { loadEmailTemplateOverride } from "@/lib/email-templates/load";
 import {
   planReminders,
   type PropertyReminderConfig,
@@ -178,23 +179,31 @@ export async function GET(req: Request): Promise<Response> {
       .filter(Boolean)
       .join("\n");
 
-    const content = renderReminderEmail(item.type as ReminderKind, {
-      guestName: r.guest.name,
-      propertyName: r.property.name,
-      confirmationCode: r.confirmationCode,
-      siteLabel: r.site.label,
-      siteTypeName: r.site.siteType.name,
-      checkInDate: r.checkIn.toISOString().slice(0, 10),
-      checkOutDate: r.checkOut.toISOString().slice(0, 10),
-      checkInTime: r.property.checkInTime,
-      checkOutTime: r.property.checkOutTime,
-      nights,
-      totalCents: r.totalCents,
-      checkInInstructions: r.property.checkInInstructions ?? "",
-      propertyContact,
-      manageUrl: `${appUrl}/p/${r.property.slug}/booking/${r.confirmationCode}`,
-      mapImageUrl: r.property.mapImageUrl ?? "",
-    });
+    const reminderOverride = await loadEmailTemplateOverride(
+      r.propertyId,
+      item.type,
+    );
+    const content = renderReminderEmail(
+      item.type as ReminderKind,
+      {
+        guestName: r.guest.name,
+        propertyName: r.property.name,
+        confirmationCode: r.confirmationCode,
+        siteLabel: r.site.label,
+        siteTypeName: r.site.siteType.name,
+        checkInDate: r.checkIn.toISOString().slice(0, 10),
+        checkOutDate: r.checkOut.toISOString().slice(0, 10),
+        checkInTime: r.property.checkInTime,
+        checkOutTime: r.property.checkOutTime,
+        nights,
+        totalCents: r.totalCents,
+        checkInInstructions: r.property.checkInInstructions ?? "",
+        propertyContact,
+        manageUrl: `${appUrl}/p/${r.property.slug}/booking/${r.confirmationCode}`,
+        mapImageUrl: r.property.mapImageUrl ?? "",
+      },
+      reminderOverride,
+    );
 
     dispatches.push(
       dispatchEmail({

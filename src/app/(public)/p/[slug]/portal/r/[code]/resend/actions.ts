@@ -10,6 +10,7 @@ import {
   renderEmail,
 } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { loadEmailTemplateOverride } from "@/lib/email-templates/load";
 import { issueGuestProfileClaimLink } from "@/lib/guest-magic-link";
 
 const ONE_DAY_MS = 86_400_000;
@@ -67,14 +68,10 @@ export async function resendGuestConfirmationAction(
       ONE_DAY_MS,
   );
 
-  const override = await prisma.emailTemplate.findUnique({
-    where: {
-      propertyId_type: {
-        propertyId: reservation.propertyId,
-        type: "RESERVATION_CONFIRMATION",
-      },
-    },
-  });
+  const override = await loadEmailTemplateOverride(
+    reservation.propertyId,
+    "RESERVATION_CONFIRMATION",
+  );
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   // Reuse the same portal section — the guest is signed in already so
@@ -124,7 +121,7 @@ export async function resendGuestConfirmationAction(
       portalSectionText: portalSectionForUnclaimed.text,
       portalSectionHtml: portalSectionForUnclaimed.html,
     },
-    override && override.active ? override : null,
+    override,
   );
 
   const send = await dispatchEmail({

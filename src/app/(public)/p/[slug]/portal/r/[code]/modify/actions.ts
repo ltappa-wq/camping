@@ -34,6 +34,7 @@ import {
   renderModificationOperatorEmail,
 } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { loadEmailTemplateOverride } from "@/lib/email-templates/load";
 import type { StayType } from "@prisma/client";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -502,24 +503,31 @@ export async function applyModificationAction(
   const newNights = Math.round(
     (newCheckOut.getTime() - newCheckIn.getTime()) / ONE_DAY_MS,
   );
-  const guestContent = renderModificationGuestEmail({
-    guestName: guest.name,
-    propertyName: property.name,
-    confirmationCode: reservation.confirmationCode,
-    oldSiteLabel: reservation.site.label,
-    oldCheckIn: reservation.checkIn.toISOString().slice(0, 10),
-    oldCheckOut: reservation.checkOut.toISOString().slice(0, 10),
-    oldNights,
-    oldTotalCents: reservation.totalCents,
-    newSiteLabel: newSite.label,
-    newCheckIn: input.newCheckIn,
-    newCheckOut: input.newCheckOut,
-    newNights,
-    newTotalCents: quote.totalCents,
-    refundCents,
-    upchargeCents: 0,
-    propertyContact,
-  });
+  const modGuestOverride = await loadEmailTemplateOverride(
+    reservation.propertyId,
+    "MODIFICATION_GUEST",
+  );
+  const guestContent = renderModificationGuestEmail(
+    {
+      guestName: guest.name,
+      propertyName: property.name,
+      confirmationCode: reservation.confirmationCode,
+      oldSiteLabel: reservation.site.label,
+      oldCheckIn: reservation.checkIn.toISOString().slice(0, 10),
+      oldCheckOut: reservation.checkOut.toISOString().slice(0, 10),
+      oldNights,
+      oldTotalCents: reservation.totalCents,
+      newSiteLabel: newSite.label,
+      newCheckIn: input.newCheckIn,
+      newCheckOut: input.newCheckOut,
+      newNights,
+      newTotalCents: quote.totalCents,
+      refundCents,
+      upchargeCents: 0,
+      propertyContact,
+    },
+    modGuestOverride,
+  );
   const operatorRecipient =
     property.email ?? property.organization.operatorUsers[0]?.email ?? null;
   const operatorContent = renderModificationOperatorEmail({

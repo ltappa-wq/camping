@@ -9,6 +9,7 @@ import { checkModificationCutoff } from "@/lib/booking-modification";
 import { requireGuestSession } from "@/lib/guest-auth";
 import { renderCancellationEmail } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { loadEmailTemplateOverride } from "@/lib/email-templates/load";
 
 type CancelPolicy = {
   cancelFullRefundDays: number;
@@ -219,18 +220,25 @@ export async function cancelReservationByGuestAction(
     .filter(Boolean)
     .join("\n");
 
-  const guestContent = renderCancellationEmail({
-    guestName: guest.name,
-    confirmationCode: reservation.confirmationCode,
-    propertyName: property.name,
-    siteLabel: site.label,
-    siteTypeName: site.siteType.name,
-    checkInDate: reservation.checkIn.toISOString().slice(0, 10),
-    checkOutDate: reservation.checkOut.toISOString().slice(0, 10),
-    refundCents,
-    propertyContact,
-    reason: null,
-  });
+  const cancelOverride = await loadEmailTemplateOverride(
+    reservation.propertyId,
+    "CANCELLATION",
+  );
+  const guestContent = renderCancellationEmail(
+    {
+      guestName: guest.name,
+      confirmationCode: reservation.confirmationCode,
+      propertyName: property.name,
+      siteLabel: site.label,
+      siteTypeName: site.siteType.name,
+      checkInDate: reservation.checkIn.toISOString().slice(0, 10),
+      checkOutDate: reservation.checkOut.toISOString().slice(0, 10),
+      refundCents,
+      propertyContact,
+      reason: null,
+    },
+    cancelOverride,
+  );
 
   const operatorRecipient =
     property.email ??

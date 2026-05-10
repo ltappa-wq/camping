@@ -1,9 +1,22 @@
 import { FROM_EMAIL, getResend } from "./resend";
 import { formatCents } from "./money";
+import {
+  fill,
+  renderEmailTemplate,
+  textToHtml,
+  type EmailContent,
+  type TemplateOverride,
+} from "./email-templates/render";
+import { TEMPLATE_DEFAULTS } from "./email-templates/defaults";
 
-// Email sender + system default templates. Operators can override per
-// property via the EmailTemplate model — a property-scoped row of the
-// matching type is preferred over the system default.
+// Email rendering + send. Each operator-customizable renderer accepts an
+// optional `override` (loaded by callers via loadEmailTemplateOverride);
+// when present, it wins over the hardcoded default. The default-path
+// rendering keeps its rich structured layout (tables, links). The
+// override path uses the operator's plain-text body and auto-derives the
+// HTML so they don't have to write any markup.
+
+export type { EmailContent, TemplateOverride };
 
 export type EmailVars = {
   guestName: string;
@@ -27,70 +40,15 @@ export type EmailVars = {
   portalSectionHtml: string;
 };
 
-export type EmailContent = {
-  subject: string;
-  bodyHtml: string;
-  bodyText: string;
-};
-
-const PLACEHOLDER = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;
-
-function fill(template: string, vars: Record<string, string>): string {
-  return template.replace(PLACEHOLDER, (_m, key: string) => vars[key] ?? "");
-}
-
-const SYSTEM_DEFAULTS = {
-  RESERVATION_CONFIRMATION: {
-    subject: "Booking confirmed — {{confirmationCode}} at {{propertyName}}",
-    bodyText: `Hi {{guestName}},
-
-Your booking at {{propertyName}} is confirmed.
-
-  Confirmation: {{confirmationCode}}
-  Site: {{siteLabel}} ({{siteTypeName}})
-  Check-in:  {{checkInDate}} at {{checkInTime}}
-  Check-out: {{checkOutDate}} at {{checkOutTime}}
-  Total: {{totalFormatted}}
-
-View or manage your booking: {{manageUrl}}
-
-{{portalSectionText}}
-
-If you need to make changes, reply to this email.
-
-— {{propertyName}}`,
-    bodyHtml: `<p>Hi {{guestName}},</p>
-<p>Your booking at <strong>{{propertyName}}</strong> is confirmed.</p>
-<table cellpadding="4" style="border-collapse:collapse">
-<tr><td style="color:#666">Confirmation</td><td><strong>{{confirmationCode}}</strong></td></tr>
-<tr><td style="color:#666">Site</td><td>{{siteLabel}} ({{siteTypeName}})</td></tr>
-<tr><td style="color:#666">Check-in</td><td>{{checkInDate}} at {{checkInTime}}</td></tr>
-<tr><td style="color:#666">Check-out</td><td>{{checkOutDate}} at {{checkOutTime}}</td></tr>
-<tr><td style="color:#666">Total</td><td><strong>{{totalFormatted}}</strong></td></tr>
-</table>
-<p><a href="{{manageUrl}}">View or manage your booking</a></p>
-{{portalSectionHtml}}
-<p>If you need to make changes, reply to this email.</p>
-<p>— {{propertyName}}</p>`,
-  },
-} as const;
-
-/**
- * Render an email's subject + bodies for a given variable set. Pass the
- * operator's override (a row from EmailTemplate) if one exists; otherwise
- * the system default for that type is used.
- */
-export function renderEmail(
-  type: keyof typeof SYSTEM_DEFAULTS,
-  vars: EmailVars,
-  override?: { subject: string; bodyHtml: string; bodyText: string } | null,
-): EmailContent {
-  const tpl = override ?? SYSTEM_DEFAULTS[type];
-  const stringVars: Record<string, string> = {
+function reservationConfirmationBag(vars: EmailVars): Record<string, string> {
+  return {
     guestName: vars.guestName,
     confirmationCode: vars.confirmationCode,
     propertyName: vars.propertyName,
     siteLabel: vars.siteLabel,
+    // Operator-facing variable name from the template editor is `siteType`;
+    // alias to siteTypeName so existing internal callers stay typed.
+    siteType: vars.siteTypeName,
     siteTypeName: vars.siteTypeName,
     checkInDate: vars.checkInDate,
     checkOutDate: vars.checkOutDate,
@@ -98,20 +56,33 @@ export function renderEmail(
     checkOutTime: vars.checkOutTime,
     nights: String(vars.nights),
     totalFormatted: vars.totalFormatted,
+    totalAmount: vars.totalFormatted,
     totalCents: String(vars.totalCents),
     manageUrl: vars.manageUrl,
+    manageBookingUrl: vars.manageUrl,
     portalSectionText: vars.portalSectionText,
     portalSectionHtml: vars.portalSectionHtml,
-  };
-  return {
-    subject: fill(tpl.subject, stringVars),
-    bodyHtml: fill(tpl.bodyHtml, stringVars),
-    bodyText: fill(tpl.bodyText, stringVars),
   };
 }
 
 /**
- * Send an email via Resend; returns the provider message ID on success.
+ * Render the reservation confirmation email. Pass an override (loaded
+ * from the operator's EmailTemplate row) to honor operator customizations;
+ * pass null/undefined to use the system default.
+ */
+export function renderEmail(
+  _type: "RESERVATION_CONFIRMATION",
+  vars: EmailVars,
+  override?: TemplateOverride | null,
+): EmailContent {
+  return renderEmailTemplate(
+    "RESERVATION_CONFIRMATION",
+    reservationConfirmationBag(vars),
+    override,
+  );
+}
+
+/** Send an email via Resend; returns the provider message ID on success.
  *
  * `from` defaults to the platform fallback (RESEND_FROM_EMAIL) so callers
  * that don't have a property context still work; production callers always
@@ -210,33 +181,25 @@ export type GuestMagicLinkVars = {
 /**
  * Renders the guest sign-in / profile-claim email. One template covers
  * both flows — the difference is the intent label and intro paragraph.
- * Hardcoded for v1 (no operator EmailTemplate override path).
+ * Operators can override per-property; default mirrors the legacy markup.
  */
 export function renderGuestMagicLinkEmail(
   v: GuestMagicLinkVars,
+  override?: TemplateOverride | null,
 ): EmailContent {
-  const subject = `${v.intentLabel} — ${v.propertyName}`;
-  const bodyText = `${v.intentLabel}
-
-${v.intro}
-
-Sign-in link (good for ${v.expiresIn}):
-${v.link}
-
-If you didn't request this email, you can safely ignore it.
-
-— ${v.propertyName}`;
-
-  const bodyHtml = `<p><strong>${escapeHtml(v.intentLabel)}</strong></p>
-<p>${escapeHtml(v.intro)}</p>
-<p><a href="${escapeHtml(v.link)}">Click here to continue</a></p>
-<p style="color:#666;font-size:12px">
-  This link is good for ${escapeHtml(v.expiresIn)}. If you didn't request
-  this email, you can safely ignore it.
-</p>
-<p>— ${escapeHtml(v.propertyName)}</p>`;
-
-  return { subject, bodyHtml, bodyText };
+  return renderEmailTemplate(
+    "GUEST_PROFILE_CLAIM",
+    {
+      propertyName: v.propertyName,
+      intentLabel: v.intentLabel,
+      intro: v.intro,
+      magicLink: v.link,
+      // Legacy alias for any old templates that referenced `link`.
+      link: v.link,
+      expiresIn: v.expiresIn,
+    },
+    override,
+  );
 }
 
 export type ModificationGuestVars = {
@@ -261,11 +224,15 @@ export type ModificationGuestVars = {
 
 /**
  * Render the guest-facing modification confirmation email. Covers all
- * three branches — refund, upcharge, and equal — by reading
- * refundCents/upchargeCents and rendering the appropriate money line.
+ * three branches — refund, upcharge, and equal — by computing a
+ * `moneyLine` variable and substituting it into the template.
+ *
+ * The default markup gets the rich tabled layout from defaults.ts; an
+ * operator override gets the same vars in plain text.
  */
 export function renderModificationGuestEmail(
   v: ModificationGuestVars,
+  override?: TemplateOverride | null,
 ): EmailContent {
   const moneyLine =
     v.refundCents > 0
@@ -274,38 +241,38 @@ export function renderModificationGuestEmail(
         ? `Your additional charge of ${formatCents(v.upchargeCents)} has been processed.`
         : "No money changed hands for this update.";
 
-  const bodyText = `Hi ${v.guestName},
+  const contactSuffix = v.propertyContact
+    ? ` or reach the property:\n\n${v.propertyContact}`
+    : ".";
+  const contactSuffixHtml = v.propertyContact
+    ? `<br><br>${escapeHtml(v.propertyContact).replace(/\n/g, "<br>")}`
+    : ".";
 
-Your booking at ${v.propertyName} has been updated.
-
-  Confirmation: ${v.confirmationCode}
-
-  Was:  Site ${v.oldSiteLabel} · ${v.oldCheckIn} → ${v.oldCheckOut} · ${v.oldNights} night${v.oldNights === 1 ? "" : "s"} · ${formatCents(v.oldTotalCents)}
-  Now:  Site ${v.newSiteLabel} · ${v.newCheckIn} → ${v.newCheckOut} · ${v.newNights} night${v.newNights === 1 ? "" : "s"} · ${formatCents(v.newTotalCents)}
-
-${moneyLine}
-
-If you didn't make this change or have questions, reply to this email${
-    v.propertyContact ? ` or reach the property:\n\n${v.propertyContact}` : "."
-  }
-
-— ${v.propertyName}`;
-
-  const bodyHtml = `<p>Hi ${escapeHtml(v.guestName)},</p>
-<p>Your booking at <strong>${escapeHtml(v.propertyName)}</strong> has been updated.</p>
-<p><strong>Confirmation:</strong> ${escapeHtml(v.confirmationCode)}</p>
-<table cellpadding="4" style="border-collapse:collapse">
-<tr><td style="color:#666">Was</td><td>Site ${escapeHtml(v.oldSiteLabel)} · ${escapeHtml(v.oldCheckIn)} → ${escapeHtml(v.oldCheckOut)} · ${v.oldNights}n · ${formatCents(v.oldTotalCents)}</td></tr>
-<tr><td style="color:#666">Now</td><td>Site ${escapeHtml(v.newSiteLabel)} · ${escapeHtml(v.newCheckIn)} → ${escapeHtml(v.newCheckOut)} · ${v.newNights}n · ${formatCents(v.newTotalCents)}</td></tr>
-</table>
-<p>${escapeHtml(moneyLine)}</p>
-<p>— ${escapeHtml(v.propertyName)}</p>`;
-
-  return {
-    subject: `Booking updated: ${v.propertyName} — ${v.confirmationCode}`,
-    bodyHtml,
-    bodyText,
-  };
+  return renderEmailTemplate(
+    "MODIFICATION_GUEST",
+    {
+      guestName: v.guestName,
+      propertyName: v.propertyName,
+      confirmationCode: v.confirmationCode,
+      oldSiteLabel: v.oldSiteLabel,
+      oldCheckIn: v.oldCheckIn,
+      oldCheckOut: v.oldCheckOut,
+      oldNights: String(v.oldNights),
+      oldTotal: formatCents(v.oldTotalCents),
+      newSiteLabel: v.newSiteLabel,
+      newCheckIn: v.newCheckIn,
+      newCheckOut: v.newCheckOut,
+      newNights: String(v.newNights),
+      newTotal: formatCents(v.newTotalCents),
+      refundAmount: v.refundCents > 0 ? formatCents(v.refundCents) : "",
+      upchargeAmount: v.upchargeCents > 0 ? formatCents(v.upchargeCents) : "",
+      moneyLine,
+      contactSuffix,
+      contactSuffixHtml,
+      propertyContact: v.propertyContact,
+    },
+    override,
+  );
 }
 
 export type ModificationOperatorVars = {
@@ -409,12 +376,16 @@ const REMINDER_INTROS: Record<ReminderKind, string> = {
  * Render one of the four scheduled reminder emails. Pure — caller
  * decides which ReminderKind to render based on the dispatcher output.
  *
- * Hardcoded for v1 (no operator template override). Phase 6a's
- * template-editing UI will wire in operator overrides for these.
+ * `headline` and `intro` come from the kind; the conditional block
+ * variables (instructions / map / manage / contact) get rendered as
+ * pre-formatted text/HTML snippets so the default template just splices
+ * them in without conditionals. Operator overrides reference any of the
+ * documented vars they care about.
  */
 export function renderReminderEmail(
   kind: ReminderKind,
   v: ReminderEmailVars,
+  override?: TemplateOverride | null,
 ): EmailContent {
   const headline = REMINDER_HEADLINES[kind];
   const intro = REMINDER_INTROS[kind];
@@ -422,78 +393,60 @@ export function renderReminderEmail(
   const showInstructions =
     kind !== "THANK_YOU_POST_STAY" && v.checkInInstructions.length > 0;
 
-  const detailsBlock = `  Confirmation: ${v.confirmationCode}
-  Site:         ${v.siteLabel} (${v.siteTypeName})
-  Check-in:     ${v.checkInDate} at ${v.checkInTime}
-  Check-out:    ${v.checkOutDate} at ${v.checkOutTime}
-  Nights:       ${v.nights}
-  Total:        ${formatCents(v.totalCents)}`;
-
   const instructionsBlock = showInstructions
     ? `\n\nCheck-in instructions:\n${v.checkInInstructions}`
     : "";
-
-  const mapBlock = v.mapImageUrl
-    ? `\n\nCampground map: ${v.mapImageUrl}`
+  const instructionsHtml = showInstructions
+    ? `<p><strong>Check-in instructions:</strong></p><pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(v.checkInInstructions)}</pre>`
     : "";
 
-  const contactBlock = v.propertyContact
-    ? `\n\n${v.propertyContact}`
+  const mapBlock = v.mapImageUrl ? `\n\nCampground map: ${v.mapImageUrl}` : "";
+  const mapHtml = v.mapImageUrl
+    ? `<p><a href="${escapeHtml(v.mapImageUrl)}">View campground map</a></p>`
     : "";
 
   const manageBlock = v.manageUrl
     ? `\n\nView your booking: ${v.manageUrl}`
     : "";
-
-  const subject =
-    kind === "THANK_YOU_POST_STAY"
-      ? `${headline} — ${v.propertyName}`
-      : `${headline} — ${v.propertyName} (${v.confirmationCode})`;
-
-  const bodyText = `${headline}.
-
-Hi ${v.guestName},
-
-${intro}
-
-${detailsBlock}${instructionsBlock}${mapBlock}${manageBlock}${contactBlock}
-
-— ${v.propertyName}`;
-
-  const bodyHtml = `<p><strong>${escapeHtml(headline)}.</strong></p>
-<p>Hi ${escapeHtml(v.guestName)},</p>
-<p>${escapeHtml(intro)}</p>
-<table cellpadding="4" style="border-collapse:collapse">
-<tr><td style="color:#666">Confirmation</td><td><strong>${escapeHtml(v.confirmationCode)}</strong></td></tr>
-<tr><td style="color:#666">Site</td><td>${escapeHtml(v.siteLabel)} (${escapeHtml(v.siteTypeName)})</td></tr>
-<tr><td style="color:#666">Check-in</td><td>${escapeHtml(v.checkInDate)} at ${escapeHtml(v.checkInTime)}</td></tr>
-<tr><td style="color:#666">Check-out</td><td>${escapeHtml(v.checkOutDate)} at ${escapeHtml(v.checkOutTime)}</td></tr>
-<tr><td style="color:#666">Nights</td><td>${v.nights}</td></tr>
-<tr><td style="color:#666">Total</td><td>${escapeHtml(formatCents(v.totalCents))}</td></tr>
-</table>
-${
-  showInstructions
-    ? `<p><strong>Check-in instructions:</strong></p><pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(v.checkInInstructions)}</pre>`
-    : ""
-}
-${
-  v.mapImageUrl
-    ? `<p><a href="${escapeHtml(v.mapImageUrl)}">View campground map</a></p>`
-    : ""
-}
-${
-  v.manageUrl
+  const manageHtml = v.manageUrl
     ? `<p><a href="${escapeHtml(v.manageUrl)}">View your booking</a></p>`
-    : ""
-}
-${
-  v.propertyContact
-    ? `<p>${escapeHtml(v.propertyContact).replace(/\n/g, "<br>")}</p>`
-    : ""
-}
-<p>— ${escapeHtml(v.propertyName)}</p>`;
+    : "";
 
-  return { subject, bodyHtml, bodyText };
+  const contactBlock = v.propertyContact ? `\n\n${v.propertyContact}` : "";
+  const contactHtml = v.propertyContact
+    ? `<p>${escapeHtml(v.propertyContact).replace(/\n/g, "<br>")}</p>`
+    : "";
+
+  const bag: Record<string, string> = {
+    headline,
+    intro,
+    guestName: v.guestName,
+    propertyName: v.propertyName,
+    confirmationCode: v.confirmationCode,
+    siteLabel: v.siteLabel,
+    siteType: v.siteTypeName,
+    siteTypeName: v.siteTypeName,
+    checkInDate: v.checkInDate,
+    checkOutDate: v.checkOutDate,
+    checkInTime: v.checkInTime,
+    checkOutTime: v.checkOutTime,
+    nights: String(v.nights),
+    totalAmount: formatCents(v.totalCents),
+    checkInInstructions: v.checkInInstructions,
+    mapImageUrl: v.mapImageUrl,
+    manageBookingUrl: v.manageUrl,
+    propertyContact: v.propertyContact,
+    instructionsBlock,
+    instructionsHtml,
+    mapBlock,
+    mapHtml,
+    manageBlock,
+    manageHtml,
+    contactBlock,
+    contactHtml,
+  };
+
+  return renderEmailTemplate(kind, bag, override);
 }
 
 export type CancellationEmailVars = {
@@ -512,56 +465,55 @@ export type CancellationEmailVars = {
 };
 
 /**
- * Renders the cancellation email sent to the guest after an operator
- * cancels their reservation. Hardcoded for v1 — operators can't override
- * the template yet (EmailTemplate model exists for future use). The
- * "5–10 business days" line covers Stripe's typical refund timing.
+ * Renders the cancellation email sent to the guest after their reservation
+ * is cancelled (operator- or guest-initiated). The "5–10 business days"
+ * line covers Stripe's typical refund timing. Operators can override.
  */
 export function renderCancellationEmail(
   v: CancellationEmailVars,
+  override?: TemplateOverride | null,
 ): EmailContent {
   const refundLine =
     v.refundCents > 0
       ? `A refund of ${formatCents(v.refundCents)} is on its way back to your card. Refunds typically take 5–10 business days to appear on your statement.`
       : `No refund will be issued per the cancellation policy in effect at the time of booking.`;
 
-  const reasonLine = v.reason ? `\nNote from the operator: ${v.reason}\n` : "";
+  const cancellationReasonLine = v.reason
+    ? `\nNote from the operator: ${v.reason}\n`
+    : "";
+  const cancellationReasonHtml = v.reason
+    ? `<p><em>Note from the operator:</em> ${escapeHtml(v.reason)}</p>`
+    : "";
 
-  const bodyText = `Hi ${v.guestName},
+  const contactSuffix = v.propertyContact
+    ? ` or reach the property directly:\n\n${v.propertyContact}`
+    : ".";
+  const contactSuffixHtml = v.propertyContact
+    ? `<br><br>${escapeHtml(v.propertyContact).replace(/\n/g, "<br>")}`
+    : ".";
 
-Your booking at ${v.propertyName} has been cancelled.
-
-  Confirmation: ${v.confirmationCode}
-  Site:         ${v.siteLabel} (${v.siteTypeName})
-  Dates:        ${v.checkInDate} → ${v.checkOutDate}
-${reasonLine}
-${refundLine}
-
-If you have questions, reply to this email${v.propertyContact ? ` or reach the property directly:\n\n${v.propertyContact}` : "."}
-
-— ${v.propertyName}`;
-
-  const bodyHtml = `<p>Hi ${escapeHtml(v.guestName)},</p>
-<p>Your booking at <strong>${escapeHtml(v.propertyName)}</strong> has been cancelled.</p>
-<table cellpadding="4" style="border-collapse:collapse">
-<tr><td style="color:#666">Confirmation</td><td><strong>${escapeHtml(v.confirmationCode)}</strong></td></tr>
-<tr><td style="color:#666">Site</td><td>${escapeHtml(v.siteLabel)} (${escapeHtml(v.siteTypeName)})</td></tr>
-<tr><td style="color:#666">Dates</td><td>${escapeHtml(v.checkInDate)} → ${escapeHtml(v.checkOutDate)}</td></tr>
-</table>
-${v.reason ? `<p><em>Note from the operator:</em> ${escapeHtml(v.reason)}</p>` : ""}
-<p>${escapeHtml(refundLine)}</p>
-<p>If you have questions, reply to this email${
-    v.propertyContact
-      ? `<br><br>${escapeHtml(v.propertyContact).replace(/\n/g, "<br>")}`
-      : "."
-  }</p>
-<p>— ${escapeHtml(v.propertyName)}</p>`;
-
-  return {
-    subject: `Booking cancelled: ${v.propertyName} — ${v.confirmationCode}`,
-    bodyHtml,
-    bodyText,
-  };
+  return renderEmailTemplate(
+    "CANCELLATION",
+    {
+      guestName: v.guestName,
+      confirmationCode: v.confirmationCode,
+      propertyName: v.propertyName,
+      siteLabel: v.siteLabel,
+      siteType: v.siteTypeName,
+      siteTypeName: v.siteTypeName,
+      checkInDate: v.checkInDate,
+      checkOutDate: v.checkOutDate,
+      refundAmount: v.refundCents > 0 ? formatCents(v.refundCents) : "",
+      refundLine,
+      cancellationReason: v.reason ?? "",
+      cancellationReasonLine,
+      cancellationReasonHtml,
+      propertyContact: v.propertyContact,
+      contactSuffix,
+      contactSuffixHtml,
+    },
+    override,
+  );
 }
 
 export type OperatorBookingNotificationVars = {
@@ -588,6 +540,9 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
+
+// Re-export for callers that need to reach the rendering primitives.
+export { fill, textToHtml, renderEmailTemplate, TEMPLATE_DEFAULTS };
 
 /**
  * Internal notification sent to the operator when a booking confirms. Plain

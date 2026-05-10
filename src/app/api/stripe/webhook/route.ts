@@ -13,6 +13,7 @@ import {
   renderOperatorBookingNotification,
 } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { loadEmailTemplateOverride } from "@/lib/email-templates/load";
 import { issueGuestProfileClaimLink } from "@/lib/guest-magic-link";
 import {
   checkAvailability,
@@ -179,14 +180,10 @@ async function handleCheckoutCompleted(
   );
 
   // Guest confirmation — operator template override beats system default.
-  const override = await prisma.emailTemplate.findUnique({
-    where: {
-      propertyId_type: {
-        propertyId: reservation.propertyId,
-        type: "RESERVATION_CONFIRMATION",
-      },
-    },
-  });
+  const override = await loadEmailTemplateOverride(
+    reservation.propertyId,
+    "RESERVATION_CONFIRMATION",
+  );
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
@@ -227,7 +224,7 @@ async function handleCheckoutCompleted(
       portalSectionText: portalSection.text,
       portalSectionHtml: portalSection.html,
     },
-    override && override.active ? override : null,
+    override,
   );
 
   // Operator notification — internal alert; no template override hook.
@@ -691,24 +688,31 @@ async function handleModificationCompleted(
     .filter(Boolean)
     .join("\n");
 
-  const guestContent = renderModificationGuestEmail({
-    guestName: reservation.guest.name,
-    propertyName: property.name,
-    confirmationCode: reservation.confirmationCode,
-    oldSiteLabel: reservation.site.label,
-    oldCheckIn: reservation.checkIn.toISOString().slice(0, 10),
-    oldCheckOut: reservation.checkOut.toISOString().slice(0, 10),
-    oldNights,
-    oldTotalCents: modification.prevTotalCents,
-    newSiteLabel: newSite.label,
-    newCheckIn: modification.nextCheckIn.toISOString().slice(0, 10),
-    newCheckOut: modification.nextCheckOut.toISOString().slice(0, 10),
-    newNights,
-    newTotalCents: quote.totalCents,
-    refundCents: 0,
-    upchargeCents: upchargeAmount,
-    propertyContact,
-  });
+  const modGuestOverride = await loadEmailTemplateOverride(
+    reservation.propertyId,
+    "MODIFICATION_GUEST",
+  );
+  const guestContent = renderModificationGuestEmail(
+    {
+      guestName: reservation.guest.name,
+      propertyName: property.name,
+      confirmationCode: reservation.confirmationCode,
+      oldSiteLabel: reservation.site.label,
+      oldCheckIn: reservation.checkIn.toISOString().slice(0, 10),
+      oldCheckOut: reservation.checkOut.toISOString().slice(0, 10),
+      oldNights,
+      oldTotalCents: modification.prevTotalCents,
+      newSiteLabel: newSite.label,
+      newCheckIn: modification.nextCheckIn.toISOString().slice(0, 10),
+      newCheckOut: modification.nextCheckOut.toISOString().slice(0, 10),
+      newNights,
+      newTotalCents: quote.totalCents,
+      refundCents: 0,
+      upchargeCents: upchargeAmount,
+      propertyContact,
+    },
+    modGuestOverride,
+  );
   const operatorRecipient =
     property.email ?? property.organization.operatorUsers[0]?.email ?? null;
   const operatorContent = renderModificationOperatorEmail({

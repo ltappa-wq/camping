@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { renderGuestMagicLinkEmail } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
+import { loadEmailTemplateOverride } from "@/lib/email-templates/load";
 
 const SIGN_IN_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
 const PROFILE_CLAIM_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -89,13 +90,20 @@ export async function sendGuestSignInEmail({
 }): Promise<void> {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const link = `${appUrl}/p/${propertySlug}/portal/claim?token=${encodeURIComponent(token)}`;
-  const content = renderGuestMagicLinkEmail({
-    propertyName,
-    intentLabel: `Sign in to ${propertyName}`,
-    intro: `Click the link below to view and manage your bookings at ${propertyName}.`,
-    link,
-    expiresIn: "1 hour",
-  });
+  const override = await loadEmailTemplateOverride(
+    propertyId,
+    "GUEST_PROFILE_CLAIM",
+  );
+  const content = renderGuestMagicLinkEmail(
+    {
+      propertyName,
+      intentLabel: `Sign in to ${propertyName}`,
+      intro: `Click the link below to view and manage your bookings at ${propertyName}.`,
+      link,
+      expiresIn: "1 hour",
+    },
+    override,
+  );
   await dispatchEmail({
     propertyId,
     reservationId: null,
