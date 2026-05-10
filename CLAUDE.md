@@ -74,7 +74,10 @@ The dev/test seed represents Monument Point Camping (Door County, WI):
 
 ## Manual setup steps (not in migrations)
 
-- **Supabase Storage `property-maps` bucket**: Public-read bucket for campground map images. Created idempotently by `pnpm setup:storage` (script at `scripts/setup-supabase-storage.ts`). Requires `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`. Re-run is safe.
+- **Supabase Storage buckets**: All public-read; uploads/deletes go through server-side code with the service role key. Created idempotently by `pnpm setup:storage` (script at `scripts/setup-supabase-storage.ts`). Requires `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`. Re-run is safe after a schema or limit change.
+  - `property-maps` (5 MB) — campground map images (Phase 1)
+  - `property-photos` (10 MB) — hero image + property gallery (Phase 6a). Path: `{propertyId}/{filename}`
+  - `site-photos` (10 MB) — per-site galleries (Phase 6a). Path: `{propertyId}/{siteId}/{filename}`
 - **Postgres `btree_gist` extension + reservation exclusion constraint**: applied via the `reservation_exclusion` raw SQL migration (already in `prisma/migrations/`).
 
 ## Conventions

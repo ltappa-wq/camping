@@ -24,8 +24,11 @@ function getSupabaseAdmin(): SupabaseClient {
 }
 
 export const PROPERTY_MAPS_BUCKET = "property-maps";
+export const PROPERTY_PHOTOS_BUCKET = "property-photos";
+export const SITE_PHOTOS_BUCKET = "site-photos";
 
-const MAX_BYTES = 5 * 1024 * 1024;
+const MAP_MAX_BYTES = 5 * 1024 * 1024;
+const PHOTO_MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export type PropertyMapUpload = {
@@ -34,6 +37,16 @@ export type PropertyMapUpload = {
   contentType: string;
   bytes: ArrayBuffer | Buffer | Uint8Array;
 };
+
+function toBytes(
+  bytes: ArrayBuffer | Buffer | Uint8Array,
+): Uint8Array | Buffer {
+  return bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
+}
+
+function safeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
 
 /**
  * Uploads a property map image to Supabase Storage and returns its public URL.
@@ -48,16 +61,12 @@ export async function uploadPropertyMap(
     );
   }
 
-  const data: Uint8Array | Buffer =
-    upload.bytes instanceof ArrayBuffer
-      ? new Uint8Array(upload.bytes)
-      : upload.bytes;
-  if (data.byteLength > MAX_BYTES) {
+  const data = toBytes(upload.bytes);
+  if (data.byteLength > MAP_MAX_BYTES) {
     throw new Error("Map image exceeds 5MB limit");
   }
 
-  const safeName = upload.filename.replace(/[^a-zA-Z0-9._-]+/g, "_");
-  const path = `${upload.propertyId}/${Date.now()}-${safeName}`;
+  const path = `${upload.propertyId}/${Date.now()}-${safeFilename(upload.filename)}`;
 
   const client = getSupabaseAdmin();
   const { error } = await client.storage
@@ -89,4 +98,113 @@ export async function deletePropertyMapByUrl(publicUrl: string): Promise<void> {
   const path = publicUrl.slice(idx + marker.length);
   if (!path) return;
   await getSupabaseAdmin().storage.from(PROPERTY_MAPS_BUCKET).remove([path]);
+}
+
+// =============================================================================
+// Phase 6a: property + site photo uploads
+// =============================================================================
+
+export type PropertyPhotoUpload = {
+  propertyId: string;
+  filename: string;
+  contentType: string;
+  bytes: ArrayBuffer | Buffer | Uint8Array;
+};
+
+export type SitePhotoUpload = {
+  propertyId: string;
+  siteId: string;
+  filename: string;
+  contentType: string;
+  bytes: ArrayBuffer | Buffer | Uint8Array;
+};
+
+/**
+ * Uploads a hero or gallery image to the property-photos bucket. 10MB cap;
+ * png/jpg/webp only. Returns the public URL the caller stores on
+ * Property.heroImageUrl or PropertyImage.url.
+ */
+export async function uploadPropertyPhoto(
+  upload: PropertyPhotoUpload,
+): Promise<{ publicUrl: string; path: string }> {
+  if (!ALLOWED_MIME.has(upload.contentType)) {
+    throw new Error(
+      `Unsupported photo type: ${upload.contentType}. Use PNG, JPG, or WebP.`,
+    );
+  }
+  const data = toBytes(upload.bytes);
+  if (data.byteLength > PHOTO_MAX_BYTES) {
+    throw new Error("Photo exceeds 10MB limit");
+  }
+
+  const path = `${upload.propertyId}/${Date.now()}-${safeFilename(upload.filename)}`;
+
+  const client = getSupabaseAdmin();
+  const { error } = await client.storage
+    .from(PROPERTY_PHOTOS_BUCKET)
+    .upload(path, data, {
+      contentType: upload.contentType,
+      upsert: false,
+    });
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  const { data: pub } = client.storage
+    .from(PROPERTY_PHOTOS_BUCKET)
+    .getPublicUrl(path);
+  return { publicUrl: pub.publicUrl, path };
+}
+
+export async function deletePropertyPhotoByUrl(
+  publicUrl: string,
+): Promise<void> {
+  const marker = `/storage/v1/object/public/${PROPERTY_PHOTOS_BUCKET}/`;
+  const idx = publicUrl.indexOf(marker);
+  if (idx === -1) return;
+  const path = publicUrl.slice(idx + marker.length);
+  if (!path) return;
+  await getSupabaseAdmin().storage.from(PROPERTY_PHOTOS_BUCKET).remove([path]);
+}
+
+/**
+ * Uploads a per-site photo to the site-photos bucket. Same constraints as
+ * property photos. Path includes both propertyId and siteId for clean
+ * cleanup if a site is hard-deleted (not common — sites soft-delete).
+ */
+export async function uploadSitePhoto(
+  upload: SitePhotoUpload,
+): Promise<{ publicUrl: string; path: string }> {
+  if (!ALLOWED_MIME.has(upload.contentType)) {
+    throw new Error(
+      `Unsupported photo type: ${upload.contentType}. Use PNG, JPG, or WebP.`,
+    );
+  }
+  const data = toBytes(upload.bytes);
+  if (data.byteLength > PHOTO_MAX_BYTES) {
+    throw new Error("Photo exceeds 10MB limit");
+  }
+
+  const path = `${upload.propertyId}/${upload.siteId}/${Date.now()}-${safeFilename(upload.filename)}`;
+
+  const client = getSupabaseAdmin();
+  const { error } = await client.storage
+    .from(SITE_PHOTOS_BUCKET)
+    .upload(path, data, {
+      contentType: upload.contentType,
+      upsert: false,
+    });
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  const { data: pub } = client.storage
+    .from(SITE_PHOTOS_BUCKET)
+    .getPublicUrl(path);
+  return { publicUrl: pub.publicUrl, path };
+}
+
+export async function deleteSitePhotoByUrl(publicUrl: string): Promise<void> {
+  const marker = `/storage/v1/object/public/${SITE_PHOTOS_BUCKET}/`;
+  const idx = publicUrl.indexOf(marker);
+  if (idx === -1) return;
+  const path = publicUrl.slice(idx + marker.length);
+  if (!path) return;
+  await getSupabaseAdmin().storage.from(SITE_PHOTOS_BUCKET).remove([path]);
 }

@@ -1,16 +1,21 @@
 /**
- * One-time setup: creates the `property-maps` Storage bucket in Supabase.
+ * One-time setup: creates the Supabase Storage buckets used by the app.
  *
- * Public read (so guests viewing /p/[slug] can render the map without auth);
- * uploads/deletes are restricted to server-side code that holds the service
- * role key. Idempotent — safe to run repeatedly.
+ * Buckets:
+ *   - property-maps   (Phase 1)  — campground map images, 5 MB cap
+ *   - property-photos (Phase 6a) — hero image + property gallery, 10 MB cap
+ *   - site-photos     (Phase 6a) — per-site galleries, 10 MB cap
  *
- * Run with: pnpm tsx scripts/setup-supabase-storage.ts
+ * All three are public-read so guests viewing /p/[slug] can render images
+ * without auth; uploads/deletes are restricted to server-side code that
+ * holds the service role key. Idempotent — safe to run repeatedly.
+ *
+ * Run with: pnpm setup:storage
  *
  * Requires NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.
  */
 import { config } from "dotenv";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 config(); // load .env
 
@@ -26,57 +31,78 @@ if (!KEY) {
   process.exit(1);
 }
 
-const BUCKET = "property-maps";
+const ALLOWED_MIME = ["image/png", "image/jpeg", "image/webp"];
 
-async function main() {
-  const supabase = createClient(URL!, KEY!, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+type BucketSpec = {
+  name: string;
+  fileSizeLimitMB: number;
+};
 
+const BUCKETS: BucketSpec[] = [
+  { name: "property-maps", fileSizeLimitMB: 5 },
+  { name: "property-photos", fileSizeLimitMB: 10 },
+  { name: "site-photos", fileSizeLimitMB: 10 },
+];
+
+async function ensureBucket(
+  supabase: SupabaseClient,
+  spec: BucketSpec,
+): Promise<void> {
   const { data: existing, error: listError } =
     await supabase.storage.listBuckets();
   if (listError) {
-    console.error("Failed to list buckets:", listError.message);
-    process.exit(1);
+    throw new Error(`Failed to list buckets: ${listError.message}`);
   }
 
-  const found = existing?.find((b) => b.name === BUCKET);
+  const limit = spec.fileSizeLimitMB * 1024 * 1024;
+  const found = existing?.find((b) => b.name === spec.name);
+
   if (found) {
-    console.log(`✓ Bucket '${BUCKET}' already exists (public=${found.public}).`);
+    console.log(
+      `✓ Bucket '${spec.name}' already exists (public=${found.public}).`,
+    );
     if (!found.public) {
-      const { error: updateError } = await supabase.storage.updateBucket(
-        BUCKET,
-        {
-          public: true,
-          fileSizeLimit: 5 * 1024 * 1024,
-          allowedMimeTypes: ["image/png", "image/jpeg", "image/webp"],
-        },
-      );
-      if (updateError) {
-        console.error("Failed to update bucket to public:", updateError.message);
-        process.exit(1);
+      const { error } = await supabase.storage.updateBucket(spec.name, {
+        public: true,
+        fileSizeLimit: limit,
+        allowedMimeTypes: ALLOWED_MIME,
+      });
+      if (error) {
+        throw new Error(
+          `Failed to update '${spec.name}' to public: ${error.message}`,
+        );
       }
       console.log(`  → Updated to public.`);
     }
     return;
   }
 
-  const { error: createError } = await supabase.storage.createBucket(BUCKET, {
+  const { error } = await supabase.storage.createBucket(spec.name, {
     public: true,
-    fileSizeLimit: 5 * 1024 * 1024,
-    allowedMimeTypes: ["image/png", "image/jpeg", "image/webp"],
+    fileSizeLimit: limit,
+    allowedMimeTypes: ALLOWED_MIME,
   });
-  if (createError) {
-    console.error("Failed to create bucket:", createError.message);
-    process.exit(1);
+  if (error) {
+    throw new Error(`Failed to create '${spec.name}': ${error.message}`);
   }
+  console.log(
+    `✓ Created public bucket '${spec.name}' (${spec.fileSizeLimitMB}MB cap, png/jpg/webp).`,
+  );
+}
 
-  console.log(`✓ Created public bucket '${BUCKET}' (5MB cap, png/jpg/webp).`);
+async function main() {
+  const supabase = createClient(URL!, KEY!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  for (const spec of BUCKETS) {
+    await ensureBucket(supabase, spec);
+  }
 }
 
 main()
   .catch((err) => {
-    console.error(err);
+    console.error(err instanceof Error ? err.message : err);
     process.exit(1);
   })
   .finally(() => {
