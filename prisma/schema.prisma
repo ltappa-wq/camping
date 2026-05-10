@@ -251,6 +251,21 @@ model Property {
   // emails. Caps at ~5000 chars in the UI; column is unbounded TEXT.
   checkInInstructions String? @db.Text
 
+  // Phase 6a: operator's own sending domain via Resend.
+  // sendingDomain is the apex they verified (e.g. monumentpointcamping.com);
+  // sendingDomainResendId is Resend's internal identifier we poll for status;
+  // sendingFromLocal is the local-part for the From address (default "bookings");
+  // sendingDomainVerified flips to true once Resend reports verification.
+  // Until verified, the email helper falls back to RESEND_FROM_EMAIL.
+  sendingDomain          String?
+  sendingDomainResendId  String?
+  sendingDomainVerified  Boolean @default(false)
+  sendingFromLocal       String  @default("bookings")
+
+  // Phase 6a: hero image displayed at the top of /p/[slug]. Stored in
+  // Supabase 'property-photos' bucket; null = fall back to text-only hero.
+  heroImageUrl String?
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -265,6 +280,7 @@ model Property {
   closedDates    ClosedDateRange[]
   emailTemplates EmailTemplate[]
   emailLogs      EmailLog[]
+  images         PropertyImage[]
 
   @@index([organizationId])
 }
@@ -360,10 +376,47 @@ model Site {
   updatedAt  DateTime  @updatedAt
 
   reservations Reservation[]
+  images       SiteImage[]
 
   @@unique([propertyId, label])
   @@index([propertyId])
   @@index([siteTypeId])
+}
+
+// =============================================================================
+// PHOTOS (Phase 6a): property gallery + per-site galleries
+// =============================================================================
+// Hero image on Property is a single URL field; these models cover the
+// multi-image gallery cases. Both are ordered by `order` ascending; the
+// admin UI manages reorder via drag-and-drop. Storage paths:
+//   property-photos/{propertyId}/{filename}
+//   site-photos/{propertyId}/{siteId}/{filename}
+// =============================================================================
+
+model PropertyImage {
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  url        String
+  caption    String?
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([propertyId, order])
+}
+
+model SiteImage {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  url       String
+  caption   String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, order])
 }
 
 // =============================================================================
