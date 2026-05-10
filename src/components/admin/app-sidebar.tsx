@@ -19,6 +19,7 @@ import {
   Receipt,
   Wand2,
   Banknote,
+  BarChart3,
 } from "lucide-react";
 
 import {
@@ -46,6 +47,7 @@ const NAV_ITEMS = [
   { href: "/admin/modifiers", label: "Modifiers", icon: Sparkles },
   { href: "/admin/addons", label: "Add-ons", icon: ShoppingBag },
   { href: "/admin/payouts", label: "Payouts", icon: Banknote },
+  { href: "/admin/reports", label: "Reports", icon: BarChart3 },
   { href: "/admin/tax-rates", label: "Tax Rates", icon: Receipt },
   { href: "/admin/closed-dates", label: "Closed Dates", icon: CalendarOff },
   { href: "/admin/quote-tester", label: "Quote Tester", icon: Calculator },
