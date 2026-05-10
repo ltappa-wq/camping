@@ -110,20 +110,32 @@ export function renderEmail(
   };
 }
 
-/** Send an email via Resend; returns the provider message ID on success. */
+/**
+ * Send an email via Resend; returns the provider message ID on success.
+ *
+ * `from` defaults to the platform fallback (RESEND_FROM_EMAIL) so callers
+ * that don't have a property context still work; production callers always
+ * route through dispatchEmail() which selects the verified-domain address
+ * via fromAddressForProperty(). `replyTo` is optional — set when the
+ * property has a contact email so guest replies land in the operator's
+ * inbox instead of bouncing.
+ */
 export async function sendEmail(args: {
   to: string;
   subject: string;
   bodyHtml: string;
   bodyText: string;
+  from?: string;
+  replyTo?: string;
 }): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
   try {
     const result = await getResend().emails.send({
-      from: FROM_EMAIL,
+      from: args.from ?? FROM_EMAIL,
       to: args.to,
       subject: args.subject,
       html: args.bodyHtml,
       text: args.bodyText,
+      ...(args.replyTo ? { replyTo: args.replyTo } : {}),
     });
     if (result.error) {
       return { ok: false, error: result.error.message };

@@ -2,12 +2,15 @@ import type { EmailTemplateType } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { type EmailContent, sendEmail } from "@/lib/email";
+import { fromAddressForProperty } from "@/lib/email-from";
 
 /**
  * Render → log → send → update-log dance for a single email. Each call:
  *   1. Inserts an EmailLog row with status QUEUED
- *   2. Sends via Resend
- *   3. Updates the log row to SENT (with providerMessageId) or FAILED
+ *   2. Looks up the property's sending-domain config + contact email
+ *   3. Sends via Resend (verified domain when available, fallback otherwise;
+ *      Reply-To set to the property's contact email when present)
+ *   4. Updates the log row to SENT (with providerMessageId) or FAILED
  *      (with errorMessage)
  *
  * Best-effort: a Resend failure is logged, not thrown. Callers that
@@ -24,6 +27,16 @@ export async function dispatchEmail(args: {
   to: string;
   content: EmailContent;
 }): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
+  const property = await prisma.property.findUnique({
+    where: { id: args.propertyId },
+    select: {
+      sendingDomain: true,
+      sendingDomainVerified: true,
+      sendingFromLocal: true,
+      email: true,
+    },
+  });
+
   const log = await prisma.emailLog.create({
     data: {
       propertyId: args.propertyId,
@@ -40,6 +53,14 @@ export async function dispatchEmail(args: {
     subject: args.content.subject,
     bodyHtml: args.content.bodyHtml,
     bodyText: args.content.bodyText,
+    from: property
+      ? fromAddressForProperty({
+          sendingDomain: property.sendingDomain,
+          sendingDomainVerified: property.sendingDomainVerified,
+          sendingFromLocal: property.sendingFromLocal,
+        })
+      : undefined,
+    replyTo: property?.email ?? undefined,
   });
 
   await prisma.emailLog.update({
