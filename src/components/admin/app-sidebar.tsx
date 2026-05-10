@@ -6,6 +6,7 @@ import {
   Building2,
   Calculator,
   CalendarDays,
+  CalendarOff,
   Grid3x3,
   LayoutDashboard,
   Layers,
@@ -46,6 +47,7 @@ const NAV_ITEMS = [
   { href: "/admin/addons", label: "Add-ons", icon: ShoppingBag },
   { href: "/admin/payouts", label: "Payouts", icon: Banknote },
   { href: "/admin/tax-rates", label: "Tax Rates", icon: Receipt },
+  { href: "/admin/closed-dates", label: "Closed Dates", icon: CalendarOff },
   { href: "/admin/quote-tester", label: "Quote Tester", icon: Calculator },
 ] as const;
 
