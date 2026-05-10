@@ -19,6 +19,7 @@
     "setup:storage": "tsx scripts/setup-supabase-storage.ts",
     "setup:stripe-test": "tsx scripts/stripe-bootstrap-test-account.ts",
     "seed:dogfood": "tsx scripts/seed-dogfood-reservations.ts",
+    "seed:dogfood-phase6a": "tsx scripts/seed-dogfood-phase6a.ts",
     "dogfood:portal": "tsx scripts/dogfood-portal-links.ts"
   },
   "prisma": {
