@@ -3,10 +3,25 @@
 // future Property edits don't retroactively change refund math for
 // existing reservations.
 //
-// The platform fee is retained on every refund tier in v1: the platform
-// keeps its $3 even when the operator gives a full refund. Stripe's
-// `refund_application_fee: false` enforces the same on Stripe's side.
-// Both layers must agree or the operator's payout reconciliation breaks.
+// retainPlatformFee semantics (caller decides per booking):
+//   - true → subtract platformFeeCents from the computed refund. Use
+//     when the customer paid the fee on top at checkout
+//     (customerPaysPlatformFee=true on the Organization). Consistent
+//     with what they agreed to: a non-refundable service fee.
+//   - false → don't subtract. Use when the operator absorbed the fee
+//     (the customer never saw a $3 line item; deducting on refund
+//     would be a fee they never agreed to).
+//
+// Modifications always pass false here — the platform fee was settled
+// on the original booking transaction, not on the refund-side
+// modification. See booking-modification.ts for that path.
+//
+// Stripe's `refund_application_fee: false` setting is independent: it
+// keeps the platform's already-collected fee on the Stripe side
+// regardless of how this function returns. The two coexist: this
+// function decides what the GUEST gets back; the Stripe flag decides
+// whether the platform's existing fee is refunded back to the operator
+// (we always say no — once we've collected, we keep).
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -30,7 +45,9 @@ export type ComputeRefundInput = {
   cancellationDate: Date;
   /** Snapshot from Reservation.cancelPolicySnapshot (or current Property defaults). */
   policy: RefundPolicySnapshot;
-  /** v1: always true. The platform fee stays with the platform regardless of tier. */
+  /** When true, subtract platformFeeCents from the computed refund.
+   *  Cancellation callers tie this to Organization.customerPaysPlatformFee:
+   *  retain only when the customer paid the fee visibly at booking. */
   retainPlatformFee: boolean;
   /** Per-booking platform fee in cents (Organization.platformFeeFlatCents). */
   platformFeeCents: number;

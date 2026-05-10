@@ -253,6 +253,33 @@ export default async function GuestReservationDetailPage({
           ) : null}
         </header>
 
+        {reservation.status === "CANCELLED" ? (
+          <section className="rounded-md border border-muted-foreground/30 bg-muted/30 p-4 text-sm">
+            <div className="font-medium">
+              Reservation cancelled
+              {reservation.cancelledAt
+                ? ` on ${reservation.cancelledAt.toISOString().slice(0, 10)}`
+                : ""}
+              .
+            </div>
+            {reservation.refundedCents > 0 ? (
+              <p className="mt-1 text-muted-foreground">
+                A refund of {formatCents(reservation.refundedCents)} is on
+                its way back to your card. Refunds typically take 5–10
+                business days to appear on your statement.
+              </p>
+            ) : (
+              <p className="mt-1 text-muted-foreground">
+                No refund was issued{
+                  reservation.cancellationReason
+                    ? ` (${reservation.cancellationReason.toLowerCase().includes("policy") ? "per cancellation policy" : "per the cancellation policy in effect at booking"})`
+                    : ""
+                }.
+              </p>
+            )}
+          </section>
+        ) : null}
+
         <Section title="Booking details">
           <dl className="space-y-2 text-sm">
             <DRow label="Site">

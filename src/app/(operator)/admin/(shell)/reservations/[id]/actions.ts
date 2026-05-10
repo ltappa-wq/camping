@@ -269,9 +269,11 @@ export type CancelReservationInput = {
  *   4. Email dispatch (best-effort, logged to EmailLog)
  *
  * The Stripe refund uses reverse_transfer:true to pull funds back from
- * the operator's connected account, and refund_application_fee:false to
- * keep the platform fee — both must agree with computeRefund's
- * retainPlatformFee:true caller-side or the books drift.
+ * the operator's connected account, and refund_application_fee:false
+ * to keep the platform's already-collected fee on the Stripe side.
+ * That's independent of whether the GUEST'S refund is reduced by the
+ * fee (computeRefund's retainPlatformFee parameter, which the modal
+ * preview sets based on Organization.customerPaysPlatformFee).
  */
 export async function cancelReservationAction(
   input: CancelReservationInput,
