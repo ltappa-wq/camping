@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
+import { blockIfImpersonating } from "@/lib/impersonation-block";
 import {
   createSendingDomainViaResend,
   getSendingDomainStatus,
@@ -40,9 +41,16 @@ export type RemoveResult = { ok: true } | { ok: false; error: string };
  * sendingDomainVerified stays false and outgoing email keeps using the
  * platform default.
  */
+// Decision: every Server Action in this file is operator-only. The
+// DNS verification flow belongs to the operator — a platform admin
+// shouldn't add, verify, or remove the sending domain on their behalf.
+// blockIfImpersonating() throws; the /admin/email-domain page renders
+// a read-only notice instead of these controls when impersonating.
+
 export async function createSendingDomain(
   values: SendingDomainFormParsed,
 ): Promise<CreateResult> {
+  await blockIfImpersonating();
   const ctx = await requireOperatorPropertyOrSetup();
   const parsed = sendingDomainFormSchema.safeParse(values);
   if (!parsed.success) {
@@ -95,6 +103,7 @@ export async function createSendingDomain(
  * specifically so the UI can prompt a re-add instead of a generic error.
  */
 export async function checkDomainVerification(): Promise<CheckResult> {
+  await blockIfImpersonating();
   const ctx = await requireOperatorPropertyOrSetup();
   const resendId = ctx.property.sendingDomainResendId;
   if (!resendId) {
@@ -145,6 +154,7 @@ export async function checkDomainVerification(): Promise<CheckResult> {
  * record what was sent at the time.
  */
 export async function removeSendingDomain(): Promise<RemoveResult> {
+  await blockIfImpersonating();
   const ctx = await requireOperatorPropertyOrSetup();
   const resendId = ctx.property.sendingDomainResendId;
 

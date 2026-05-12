@@ -1,6 +1,7 @@
 import { CheckCircle2, Circle, AlertCircle } from "lucide-react";
 
 import { requireOperatorProperty } from "@/lib/auth-property";
+import { isImpersonatingRequest } from "@/lib/impersonation-block";
 import { refreshAccountStatus } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,7 @@ const STAGE_COPY: Record<
 
 export default async function PayoutsPage() {
   const ctx = await requireOperatorProperty();
+  const impersonating = await isImpersonatingRequest();
 
   // Best-effort sync from Stripe in case account.updated webhooks were missed.
   // Failures here shouldn't block rendering — we'll show whatever's in the DB.
@@ -125,24 +127,28 @@ export default async function PayoutsPage() {
               />
             </ul>
 
-            <div className="flex flex-wrap gap-2 pt-2">
-              {stage !== "ACTIVE" ? (
-                <form action={continueOnboardingAction}>
-                  <Button type="submit">
-                    {stage === "NOT_STARTED"
-                      ? "Set up payments"
-                      : "Continue Stripe setup"}
-                  </Button>
-                </form>
-              ) : null}
-              {org.stripeAccountId ? (
-                <form action={openStripeDashboardAction}>
-                  <Button type="submit" variant="outline">
-                    View Stripe dashboard
-                  </Button>
-                </form>
-              ) : null}
-            </div>
+            {impersonating ? (
+              <ReadOnlyNotice />
+            ) : (
+              <div className="flex flex-wrap gap-2 pt-2">
+                {stage !== "ACTIVE" ? (
+                  <form action={continueOnboardingAction}>
+                    <Button type="submit">
+                      {stage === "NOT_STARTED"
+                        ? "Set up payments"
+                        : "Continue Stripe setup"}
+                    </Button>
+                  </form>
+                ) : null}
+                {org.stripeAccountId ? (
+                  <form action={openStripeDashboardAction}>
+                    <Button type="submit" variant="outline">
+                      View Stripe dashboard
+                    </Button>
+                  </form>
+                ) : null}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -161,14 +167,27 @@ export default async function PayoutsPage() {
               </p>
             </div>
             <div className="border-t pt-4">
-              <FeeModeToggle
-                initialPassThrough={org.customerPaysPlatformFee}
-              />
+              {impersonating ? (
+                <ReadOnlyNotice />
+              ) : (
+                <FeeModeToggle
+                  initialPassThrough={org.customerPaysPlatformFee}
+                />
+              )}
             </div>
           </CardContent>
         </Card>
       </div>
     </>
+  );
+}
+
+function ReadOnlyNotice() {
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+      ⓘ These settings can only be changed by the operator. Contact them
+      directly to make changes.
+    </div>
   );
 }
 
