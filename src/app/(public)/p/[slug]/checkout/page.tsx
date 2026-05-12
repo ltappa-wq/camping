@@ -17,7 +17,14 @@ import {
   type TaxAppliesTo,
   type TaxRateInput,
 } from "@/lib/pricing";
-import { PublicHeader } from "../_components/public-header";
+import {
+  DataStrip,
+  dateNice,
+  dow,
+  formatTime12,
+  PageShell,
+  PageTitle,
+} from "@/components/public/chrome";
 import { getPropertyWithOrgBySlug } from "../_lib/property";
 import { CheckoutForm } from "./checkout-form";
 
@@ -44,32 +51,33 @@ export default async function CheckoutPage({
   const sp = await searchParams;
   const property = await getPropertyWithOrgBySlug(slug);
 
-  const header = (
-    <PublicHeader
-      slug={property.slug}
-      name={property.name}
-      logoUrl={property.logoUrl}
-    />
-  );
+  const chrome = {
+    id: property.id,
+    slug: property.slug,
+    name: property.name,
+    logoUrl: property.logoUrl,
+    phone: property.phone,
+    primaryColor: property.primaryColor,
+  };
 
   const errorPage = (msg: string) => (
-    <>
-      {header}
-      <main className="mx-auto max-w-2xl px-4 py-8">
-        <div className="rounded-md border border-destructive/50 bg-destructive/5 p-6">
-          <h1 className="text-lg font-semibold text-destructive">
-            Booking unavailable
-          </h1>
-          <p className="mt-1 text-sm">{msg}</p>
-          <Link
-            href={`/p/${slug}`}
-            className="mt-4 inline-block text-sm underline"
-          >
-            ← Back to {property.name}
-          </Link>
-        </div>
-      </main>
-    </>
+    <PageShell
+      property={chrome}
+      breadcrumb={{
+        label: `Back to ${property.name.toLowerCase()}`,
+        href: `/p/${slug}`,
+      }}
+    >
+      <PageTitle lede={msg}>booking unavailable.</PageTitle>
+      <section className="mx-auto max-w-[1280px] px-6 pb-20 pt-10 md:px-8">
+        <Link
+          href={`/p/${slug}`}
+          className="inline-flex h-10 items-center justify-center rounded-md bg-[var(--brand)] px-4 text-[13.5px] font-medium tracking-tight text-white transition hover:opacity-90"
+        >
+          Back to {property.name.toLowerCase()} →
+        </Link>
+      </section>
+    </PageShell>
   );
 
   if (
@@ -104,7 +112,8 @@ export default async function CheckoutPage({
   }
   if (
     (site.siteType.maxAdults != null && adults > site.siteType.maxAdults) ||
-    (site.siteType.maxChildren != null && children > site.siteType.maxChildren)
+    (site.siteType.maxChildren != null &&
+      children > site.siteType.maxChildren)
   ) {
     return errorPage("Site doesn't accommodate your party size.");
   }
@@ -164,7 +173,9 @@ export default async function CheckoutPage({
     season,
   });
   if (!avail.available) {
-    return errorPage(avail.reasons[0] ?? "Site is unavailable for those dates.");
+    return errorPage(
+      avail.reasons[0] ?? "Site is unavailable for those dates.",
+    );
   }
 
   const ratePlanInputs: RatePlanInput[] = ratePlans.map((p) => ({
@@ -223,60 +234,77 @@ export default async function CheckoutPage({
     throw e;
   }
 
-  return (
-    <>
-      {header}
-      <main className="mx-auto max-w-2xl px-4 py-8">
-        <Link
-          href={`/p/${slug}/search?from=${sp.from}&to=${sp.to}&adults=${adults}&children=${children}`}
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
-          ← Back to results
-        </Link>
-        <h1 className="mt-2 text-2xl font-semibold">Confirm your booking</h1>
-        <div className="mt-1 text-sm text-muted-foreground">
-          Site {site.label} · {site.siteType.name} · {sp.from} → {sp.to} ·{" "}
-          {adults} adult{adults === 1 ? "" : "s"}
-          {children > 0
-            ? `, ${children} child${children === 1 ? "" : "ren"}`
-            : ""}
-        </div>
+  const partyLabel = `${adults} adult${adults === 1 ? "" : "s"}${
+    children ? `, ${children} child${children === 1 ? "" : "ren"}` : ""
+  }`;
 
-        <div className="mt-6">
-          <CheckoutForm
-            slug={slug}
-            siteId={site.id}
-            siteLabel={site.label}
-            siteTypeName={site.siteType.name}
-            from={sp.from}
-            to={sp.to}
-            adults={adults}
-            children={children}
-            addons={addons.map((a) => ({
-              id: a.id,
-              name: a.name,
-              priceCents: a.priceCents,
-              description: a.description,
-              maxQuantity:
-                a.inventoryCount == null ? 99 : Math.max(0, a.inventoryCount),
-            }))}
-            initialQuote={baseQuote}
-            bookingFee={
-              property.organization.customerPaysPlatformFee
-                ? Math.min(
-                    Math.max(0, property.organization.platformFeeFlatCents),
-                    baseQuote.totalCents,
-                  )
-                : 0
-            }
-            cancellationPolicy={{
-              fullRefundDays: property.cancelFullRefundDays,
-              partialRefundDays: property.cancelPartialRefundDays,
-              partialRefundPct: property.cancelPartialRefundPct,
-            }}
-          />
-        </div>
-      </main>
-    </>
+  return (
+    <PageShell
+      property={chrome}
+      breadcrumb={{
+        label: "Back to results",
+        href: `/p/${slug}/search?from=${sp.from}&to=${sp.to}&adults=${adults}&children=${children}`,
+      }}
+    >
+      <PageTitle lede="Tell us who's coming and we'll send a confirmation to your email. You won't be charged until you click through to payment on the next page.">
+        confirm your booking.
+      </PageTitle>
+
+      <DataStrip
+        items={[
+          { label: "Site", big: site.label, sub: site.siteType.name },
+          {
+            label: "Check-in",
+            big: dateNice(sp.from),
+            sub: `${dow(sp.from)} · after ${formatTime12(property.checkInTime)}`,
+          },
+          {
+            label: "Check-out",
+            big: dateNice(sp.to),
+            sub: `${dow(sp.to)} · by ${formatTime12(property.checkOutTime)}`,
+          },
+          {
+            label: "Party",
+            big: String(adults + children),
+            sub: partyLabel,
+          },
+        ]}
+      />
+
+      <section className="mx-auto max-w-[1280px] px-6 pb-20 pt-12 md:px-8">
+        <CheckoutForm
+          slug={slug}
+          siteId={site.id}
+          siteLabel={site.label}
+          siteTypeName={site.siteType.name}
+          from={sp.from}
+          to={sp.to}
+          adults={adults}
+          children={children}
+          addons={addons.map((a) => ({
+            id: a.id,
+            name: a.name,
+            priceCents: a.priceCents,
+            description: a.description,
+            maxQuantity:
+              a.inventoryCount == null ? 99 : Math.max(0, a.inventoryCount),
+          }))}
+          initialQuote={baseQuote}
+          bookingFee={
+            property.organization.customerPaysPlatformFee
+              ? Math.min(
+                  Math.max(0, property.organization.platformFeeFlatCents),
+                  baseQuote.totalCents,
+                )
+              : 0
+          }
+          cancellationPolicy={{
+            fullRefundDays: property.cancelFullRefundDays,
+            partialRefundDays: property.cancelPartialRefundDays,
+            partialRefundPct: property.cancelPartialRefundPct,
+          }}
+        />
+      </section>
+    </PageShell>
   );
 }

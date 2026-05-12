@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
 
+import { LedgerCard } from "@/components/public/chrome";
 import { getReservationStatus } from "./actions";
 
 const POLL_INTERVAL_MS = 2_000;
@@ -22,9 +22,11 @@ const POLL_TIMEOUT_MS = 30_000;
 export function HoldingView({
   slug,
   code,
+  obfuscatedEmail,
 }: {
   slug: string;
   code: string;
+  obfuscatedEmail: string;
 }) {
   const router = useRouter();
   const [timedOut, setTimedOut] = useState(false);
@@ -40,8 +42,6 @@ export function HoldingView({
         const status = await getReservationStatus(slug, code);
         if (cancelled) return;
         if (status !== "HELD") {
-          // Status changed (CONFIRMED, CANCELLED, etc.) or NOT_FOUND.
-          // Re-render the server component to pick the right view.
           router.refresh();
           return;
         }
@@ -63,23 +63,38 @@ export function HoldingView({
 
   if (timedOut) {
     return (
-      <div className="rounded-lg border bg-card p-8 text-center">
-        <h1 className="text-xl font-semibold">Still processing</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Your payment is taking a moment to confirm. We&apos;ll email you the
-          minute it&apos;s done — feel free to close this tab.
+      <LedgerCard title="Status" className="max-w-[680px]">
+        <div className="flex items-center gap-3">
+          <span className="inline-block h-3 w-3 rounded-full bg-stone-400" />
+          <span className="text-[14.5px] text-stone-700">
+            Still processing
+          </span>
+        </div>
+        <p className="mt-4 text-[13.5px] leading-relaxed text-stone-500">
+          Your payment is taking a moment to confirm. We&apos;ll email you at{" "}
+          <span className="text-stone-800">{obfuscatedEmail}</span> the minute
+          it&apos;s done — feel free to close this tab.
         </p>
-      </div>
+      </LedgerCard>
     );
   }
 
   return (
-    <div className="rounded-lg border bg-card p-8 text-center">
-      <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
-      <h1 className="mt-3 text-xl font-semibold">Confirming your booking…</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Hang tight — we&apos;re finalizing payment with our processor.
+    <LedgerCard title="Status" className="max-w-[680px]">
+      <div className="flex items-center gap-3">
+        <span className="relative inline-flex h-3 w-3">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400/70" />
+          <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-500" />
+        </span>
+        <span className="text-[14.5px] text-stone-700">
+          Awaiting payment confirmation
+        </span>
+      </div>
+      <p className="mt-4 text-[13.5px] leading-relaxed text-stone-500">
+        You can leave this page — we&apos;ll email you at{" "}
+        <span className="text-stone-800">{obfuscatedEmail}</span> as soon as we
+        get the green light from Stripe.
       </p>
-    </div>
+    </LedgerCard>
   );
 }

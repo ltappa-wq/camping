@@ -1,15 +1,24 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/money";
-import { PublicHeader } from "../../_components/public-header";
+import {
+  DataStrip,
+  dateNice,
+  dow,
+  formatTime12,
+  LedgerCard,
+  LedgerRow,
+  LedgerTotal,
+  nightsBetween,
+  obfuscateEmail,
+  PageShell,
+  PageTitle,
+} from "@/components/public/chrome";
 import { getPropertyBySlug } from "../../_lib/property";
 import { CopyCode } from "./copy-code";
 import { HoldingView } from "./holding-view";
-
-const ONE_DAY_MS = 86_400_000;
 
 export const dynamic = "force-dynamic";
 
@@ -32,24 +41,6 @@ function parseCancelPolicy(json: unknown): CancelPolicySnapshot | null {
   return o as CancelPolicySnapshot;
 }
 
-function formatCancelPolicy(p: CancelPolicySnapshot): string {
-  return [
-    `Cancel ${p.cancelFullRefundDays}+ days before arrival: full refund.`,
-    `Cancel ${p.cancelPartialRefundDays}–${p.cancelFullRefundDays - 1} days before: ${p.cancelPartialRefundPct}% refund.`,
-    `Cancel less than ${p.cancelPartialRefundDays} days before: no refund.`,
-  ].join(" ");
-}
-
-/** "john@gmail.com" → "j***@gmail.com". Hides everything but the first
- *  character of the local part. */
-function obfuscateEmail(email: string): string {
-  const at = email.indexOf("@");
-  if (at <= 0) return "***";
-  const local = email.slice(0, at);
-  const domain = email.slice(at);
-  return `${local.slice(0, 1)}${"*".repeat(Math.max(2, local.length - 1))}${domain}`;
-}
-
 export default async function BookingPage({
   params,
 }: {
@@ -68,90 +59,91 @@ export default async function BookingPage({
   });
   if (!reservation) notFound();
 
-  const header = (
-    <PublicHeader
-      slug={property.slug}
-      name={property.name}
-      logoUrl={property.logoUrl}
-    />
-  );
+  const chrome = {
+    id: property.id,
+    slug: property.slug,
+    name: property.name,
+    logoUrl: property.logoUrl,
+    phone: property.phone,
+    primaryColor: property.primaryColor,
+  };
+  const obfuscatedEmail = obfuscateEmail(reservation.guest.email);
 
-  // HELD — webhook hasn't arrived yet. Render the polling client component;
-  // on status change it triggers router.refresh and we re-enter this server
-  // component with the new status.
+  // ---- HELD: webhook hasn't arrived yet, polling client component ----
   if (reservation.status === "HELD") {
     return (
-      <>
-        {header}
-        <main className="mx-auto max-w-2xl px-4 py-8">
-          <HoldingView slug={slug} code={code} />
-        </main>
-      </>
+      <PageShell property={chrome}>
+        <PageTitle
+          lede={
+            <>
+              We&apos;re waiting for your payment processor to confirm the
+              charge. This usually takes a few seconds. Code{" "}
+              <span className="font-mono">{reservation.confirmationCode}</span>.
+            </>
+          }
+        >
+          finishing up your booking…
+        </PageTitle>
+        <section className="mx-auto max-w-[1280px] px-6 pb-20 pt-10 md:px-8">
+          <HoldingView
+            slug={slug}
+            code={code}
+            obfuscatedEmail={obfuscatedEmail}
+          />
+        </section>
+      </PageShell>
     );
   }
 
-  // CANCELLED, DRAFT (shouldn't happen, but defensive) — booking didn't
-  // complete. Friendly message + try-again link.
+  // ---- CANCELLED / DRAFT / NO_SHOW: didn't complete ----
   if (
     reservation.status === "CANCELLED" ||
     reservation.status === "DRAFT" ||
     reservation.status === "NO_SHOW"
   ) {
     return (
-      <>
-        {header}
-        <main className="mx-auto max-w-2xl px-4 py-8">
-          <div className="rounded-lg border bg-card p-6">
-            <h1 className="text-2xl font-semibold">
-              Your booking didn&apos;t complete
-            </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {reservation.cancellationReason ??
-                "Payment didn't go through. No charge was made."}{" "}
-              You can try again any time — sites for these dates may still be
-              available.
-            </p>
-            <div className="mt-6 flex flex-wrap gap-2">
-              <Button asChild>
-                <Link href={`/p/${slug}`}>Try again</Link>
-              </Button>
-              {property.email || property.phone ? (
-                <div className="flex flex-col text-xs text-muted-foreground sm:items-end">
-                  <span>Need help?</span>
-                  {property.email ? (
-                    <a
-                      href={`mailto:${property.email}`}
-                      className="underline hover:text-foreground"
-                    >
-                      {property.email}
-                    </a>
-                  ) : null}
-                  {property.phone ? (
-                    <a
-                      href={`tel:${property.phone}`}
-                      className="underline hover:text-foreground"
-                    >
-                      {property.phone}
-                    </a>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
+      <PageShell
+        property={chrome}
+        breadcrumb={{
+          label: `Back to ${property.name.toLowerCase()}`,
+          href: `/p/${slug}`,
+        }}
+      >
+        <PageTitle
+          lede={
+            reservation.cancellationReason ??
+            "Payment didn't go through and no charge was made. Sites for these dates may still be available — give it another go."
+          }
+        >
+          your booking didn&apos;t complete.
+        </PageTitle>
+        <section className="mx-auto max-w-[1280px] px-6 pb-20 pt-10 md:px-8">
+          <div className="flex max-w-[720px] flex-wrap items-center gap-4">
+            <Link
+              href={`/p/${slug}`}
+              className="inline-flex h-12 items-center rounded-md bg-[var(--brand)] px-6 text-[14px] font-medium text-white hover:opacity-90"
+            >
+              Try again →
+            </Link>
+            {property.phone ? (
+              <a
+                href={`tel:${property.phone}`}
+                className="text-[14px] text-stone-700 underline underline-offset-4 hover:text-stone-900"
+              >
+                or call {property.phone}
+              </a>
+            ) : null}
           </div>
-        </main>
-      </>
+        </section>
+      </PageShell>
     );
   }
 
-  // CONFIRMED, CHECKED_IN, CHECKED_OUT — full success view.
+  // ---- CONFIRMED / CHECKED_IN / CHECKED_OUT: success ----
   const checkInDate = reservation.checkIn.toISOString().slice(0, 10);
   const checkOutDate = reservation.checkOut.toISOString().slice(0, 10);
-  const nights = Math.round(
-    (reservation.checkOut.getTime() - reservation.checkIn.getTime()) /
-      ONE_DAY_MS,
-  );
+  const nights = nightsBetween(checkInDate, checkOutDate);
   const policy = parseCancelPolicy(reservation.cancelPolicySnapshot);
-  const obfuscatedEmail = obfuscateEmail(reservation.guest.email);
   const addressLines = [
     property.addressLine1,
     property.addressLine2,
@@ -164,171 +156,192 @@ export default async function BookingPage({
     : null;
 
   return (
-    <>
-      {header}
-      <main className="mx-auto max-w-2xl space-y-6 px-4 py-8">
-        <section className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-6">
-          <h1 className="text-2xl font-semibold">You&apos;re booked!</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            A confirmation email is on the way to {obfuscatedEmail}.
-          </p>
-          <div className="mt-4 flex items-center gap-3">
-            <code className="rounded bg-background px-3 py-1.5 text-lg font-semibold tracking-wider">
-              {reservation.confirmationCode}
-            </code>
-            <CopyCode code={reservation.confirmationCode} />
-          </div>
-        </section>
+    <PageShell property={chrome}>
+      <section className="mx-auto max-w-[1280px] px-6 pt-8 md:px-8">
+        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11.5px] font-medium uppercase tracking-[0.18em] text-emerald-800">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
+          Confirmed
+        </div>
+      </section>
+      <PageTitle
+        lede={
+          <>
+            A confirmation email is on its way to{" "}
+            <span className="text-stone-800">{obfuscatedEmail}</span>. Show
+            this page (or the email) at check-in.
+          </>
+        }
+      >
+        you&apos;re booked.
+      </PageTitle>
 
-        <section className="space-y-2 rounded-md border bg-card p-4 text-sm">
-          <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Booking details
-          </h2>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Site</span>
-            <span>
-              {reservation.site.label} · {reservation.site.siteType.name}
-            </span>
+      {/* Confirmation code — generous, like an actual ticket */}
+      <section className="mx-auto mt-8 max-w-[1280px] px-6 md:mt-10 md:px-8">
+        <div className="rounded-md border border-stone-200 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(20,15,8,0.18)] md:p-8">
+          <div className="flex flex-wrap items-end justify-between gap-6">
+            <div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-stone-500">
+                Confirmation code
+              </div>
+              <div className="mt-2 font-mono text-3xl leading-none tracking-[0.18em] text-stone-900 md:text-4xl">
+                {reservation.confirmationCode}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <CopyCode code={reservation.confirmationCode} />
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Dates</span>
-            <span>
-              {checkInDate} → {checkOutDate} · {nights} night
-              {nights === 1 ? "" : "s"}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Check-in</span>
-            <span>{property.checkInTime}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Check-out</span>
-            <span>{property.checkOutTime}</span>
-          </div>
-        </section>
+        </div>
+      </section>
 
-        <section className="rounded-md border bg-card p-4 text-sm">
-          <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Charges
-          </h2>
-          <ul className="mt-2 space-y-1">
-            {reservation.lineItems.map((li) => (
-              <li key={li.id} className="flex justify-between gap-2">
-                <span className="text-muted-foreground">{li.description}</span>
-                <span
-                  className={`tabular-nums ${
-                    li.amountCents < 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : ""
-                  }`}
-                >
-                  {li.amountCents < 0
-                    ? `−${formatCents(-li.amountCents)}`
-                    : formatCents(li.amountCents)}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-3 flex justify-between border-t pt-2 text-base font-semibold">
-            <span>Total</span>
-            <span className="tabular-nums">
-              {formatCents(reservation.totalCents)}
-            </span>
+      <DataStrip
+        items={[
+          {
+            label: "Site",
+            big: reservation.site.label,
+            sub: reservation.site.siteType.name,
+          },
+          {
+            label: "Check-in",
+            big: dateNice(checkInDate),
+            sub: `${dow(checkInDate)} · after ${formatTime12(property.checkInTime)}`,
+          },
+          {
+            label: "Check-out",
+            big: dateNice(checkOutDate),
+            sub: `${dow(checkOutDate)} · by ${formatTime12(property.checkOutTime)}`,
+          },
+          {
+            label: "Nights",
+            big: String(nights),
+            sub: nights === 1 ? "1 night" : `${nights} nights`,
+          },
+        ]}
+      />
+
+      <section className="mx-auto max-w-[1280px] px-6 pb-20 pt-12 md:px-8">
+        <div className="grid grid-cols-12 gap-6 lg:gap-8">
+          {/* Left: charges + cancellation */}
+          <div className="col-span-12 space-y-5 lg:col-span-7">
+            <LedgerCard title="Charges">
+              <dl>
+                {reservation.lineItems.map((li) => (
+                  <LedgerRow
+                    key={li.id}
+                    k={li.description}
+                    v={
+                      li.amountCents < 0
+                        ? `−${formatCents(-li.amountCents)}`
+                        : formatCents(li.amountCents)
+                    }
+                    sign={li.amountCents < 0 ? "neg" : undefined}
+                  />
+                ))}
+              </dl>
+              <LedgerTotal
+                k="Total charged"
+                v={formatCents(reservation.totalCents)}
+              />
+            </LedgerCard>
+
+            {policy ? (
+              <LedgerCard title="Cancellation policy" tone="muted">
+                <p className="text-[14px] leading-relaxed text-stone-700">
+                  Cancel{" "}
+                  <span className="font-medium text-stone-900">
+                    {policy.cancelFullRefundDays}+ days
+                  </span>{" "}
+                  before arrival for a full refund. Cancel{" "}
+                  <span className="font-medium text-stone-900">
+                    {policy.cancelPartialRefundDays}–
+                    {policy.cancelFullRefundDays - 1} days
+                  </span>{" "}
+                  before for a{" "}
+                  <span className="font-medium text-stone-900">
+                    {policy.cancelPartialRefundPct}% refund
+                  </span>
+                  . No refund within {policy.cancelPartialRefundDays} days of
+                  arrival.
+                </p>
+              </LedgerCard>
+            ) : null}
           </div>
-        </section>
 
-        {policy ? (
-          <section className="rounded-md border bg-muted/30 p-4 text-xs text-muted-foreground">
-            <div className="font-medium text-foreground">Cancellation policy</div>
-            <p className="mt-1">{formatCancelPolicy(policy)}</p>
-          </section>
-        ) : null}
-
-        {addressLines.length || property.email || property.phone ? (
-          <section className="space-y-3 rounded-md border bg-card p-4 text-sm">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {property.name}
-            </h2>
-            {addressLines.length ? (
-              <div>
+          {/* Right: getting here / next time */}
+          <aside className="col-span-12 space-y-5 lg:col-span-5">
+            <LedgerCard title="Getting here">
+              <div className="text-[14px] leading-relaxed text-stone-700">
+                <div className="font-medium text-stone-900">
+                  {property.name}
+                </div>
                 {addressLines.map((line, i) => (
                   <div key={i}>{line}</div>
                 ))}
+              </div>
+              {property.directionsText ? (
+                <p className="mt-4 whitespace-pre-line text-[13.5px] leading-relaxed text-stone-600">
+                  {property.directionsText}
+                </p>
+              ) : null}
+              <div className="mt-4 flex flex-wrap gap-3">
                 {mapsHref ? (
                   <a
                     href={mapsHref}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="mt-1 inline-block text-xs underline hover:text-foreground"
+                    className="text-[13px] text-stone-700 underline underline-offset-4 hover:text-stone-900"
                   >
                     Open in Maps
                   </a>
                 ) : null}
+                {property.phone ? (
+                  <a
+                    href={`tel:${property.phone}`}
+                    className="text-[13px] text-stone-700 underline underline-offset-4 hover:text-stone-900"
+                  >
+                    {property.phone}
+                  </a>
+                ) : null}
+                {property.email ? (
+                  <a
+                    href={`mailto:${property.email}`}
+                    className="text-[13px] text-stone-700 underline underline-offset-4 hover:text-stone-900"
+                  >
+                    {property.email}
+                  </a>
+                ) : null}
               </div>
-            ) : null}
-            {property.email ? (
-              <div>
-                <span className="text-muted-foreground">Email: </span>
+            </LedgerCard>
+
+            {property.mapImageUrl ? (
+              <LedgerCard title="Campground map">
                 <a
-                  href={`mailto:${property.email}`}
-                  className="underline hover:text-foreground"
+                  href={property.mapImageUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block overflow-hidden rounded-md border border-stone-200"
                 >
-                  {property.email}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={property.mapImageUrl}
+                    alt={`${property.name} map`}
+                    className="w-full"
+                  />
                 </a>
-              </div>
+              </LedgerCard>
             ) : null}
-            {property.phone ? (
-              <div>
-                <span className="text-muted-foreground">Phone: </span>
-                <a
-                  href={`tel:${property.phone}`}
-                  className="underline hover:text-foreground"
-                >
-                  {property.phone}
-                </a>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
 
-        {property.mapImageUrl ? (
-          <section className="rounded-md border bg-card p-4">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Campground map
-            </h2>
-            <a
-              href={property.mapImageUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-2 block"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={property.mapImageUrl}
-                alt={`${property.name} map`}
-                className="w-full rounded border"
-              />
-            </a>
-          </section>
-        ) : null}
-
-        {property.directionsText ? (
-          <section className="rounded-md border bg-card p-4 text-sm">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Directions
-            </h2>
-            <p className="mt-2 whitespace-pre-line">{property.directionsText}</p>
-          </section>
-        ) : null}
-
-        <section className="rounded-md border border-dashed bg-muted/20 p-4 text-sm">
-          <h2 className="font-medium">Save your info for next time</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            We&apos;ll send a sign-in link to {obfuscatedEmail} so you can
-            view this booking and rebook faster. Coming soon.
-          </p>
-        </section>
-      </main>
-    </>
+            <LedgerCard title="Next time" tone="muted">
+              <p className="text-[13.5px] leading-relaxed text-stone-700">
+                We&apos;ll send a sign-in link to{" "}
+                <span className="text-stone-900">{obfuscatedEmail}</span> so
+                you can view this booking, modify dates, or rebook with one
+                tap.
+              </p>
+            </LedgerCard>
+          </aside>
+        </div>
+      </section>
+    </PageShell>
   );
 }
