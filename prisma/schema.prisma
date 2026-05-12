@@ -856,3 +856,56 @@ model VerificationToken {
 
   @@unique([identifier, token])
 }
+
+// =============================================================================
+// PLATFORM ADMIN (Phase 7a) — concierge / back-office tier
+// =============================================================================
+// Distinct from OperatorUser: a small set of internal staff who can sign
+// in at /platform-admin, view all organizations, and "act as" any operator
+// to help with setup or troubleshooting. Every mutating action taken
+// while impersonating logs to PlatformAdminAction.
+//
+// Sign-in for v1 uses an allowlist (PLATFORM_ADMIN_BOOTSTRAP_EMAILS) and
+// issues sessions directly (no magic-link round-trip). The magic-link
+// table is reserved for the Resend-backed flow whenever we add it.
+// =============================================================================
+
+model PlatformAdmin {
+  id          String    @id @default(cuid())
+  email       String    @unique
+  name        String?
+  active      Boolean   @default(true)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+
+  actions     PlatformAdminAction[]
+}
+
+model PlatformAdminAction {
+  id              String        @id @default(cuid())
+  platformAdminId String
+  platformAdmin   PlatformAdmin @relation(fields: [platformAdminId], references: [id])
+
+  // Scoping context. organizationId is null for cross-org actions
+  // (e.g., admin invite); propertyId scopes a property-specific action
+  // when applicable.
+  organizationId  String?
+  propertyId      String?
+
+  // What happened. `action` is a dot-namespaced descriptor — see
+  // src/lib/audit.ts for the convention. `description` is the human-
+  // readable line shown in the audit log UI. `payload` carries before/
+  // after snapshots when useful (kept small — meaningful fields only).
+  action          String
+  description     String?
+  payload         Json?
+
+  createdAt       DateTime      @default(now())
+
+  @@index([platformAdminId])
+  @@index([organizationId])
+  @@index([createdAt])
+  @@index([action])
+}
