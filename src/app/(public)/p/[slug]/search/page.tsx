@@ -1,7 +1,5 @@
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/prisma";
 import {
   checkAvailability,
@@ -21,7 +19,13 @@ import {
   type TaxAppliesTo,
   type TaxRateInput,
 } from "@/lib/pricing";
-import { PublicHeader } from "../_components/public-header";
+import {
+  dateNice,
+  dow,
+  formatTime12,
+  PageShell,
+  PageTitle,
+} from "@/components/public/chrome";
 import { SearchForm } from "../_components/search-form";
 import {
   effectiveTotalCents,
@@ -49,6 +53,14 @@ function validateDates(from: string, to: string): string | null {
   return null;
 }
 
+type SiteSpec = {
+  electricAmps: number | null;
+  hasWater: boolean;
+  hasSewer: boolean;
+  maxAdults: number | null;
+  maxChildren: number | null;
+};
+
 type SiteOffer =
   | {
       kind: "available";
@@ -57,6 +69,7 @@ type SiteOffer =
       siteTypeName: string;
       tags: string[];
       thumbnailUrl: string | null;
+      spec: SiteSpec;
       quote: Quote;
     }
   | {
@@ -83,37 +96,38 @@ export default async function SearchPage({
   const adults = Math.max(1, Number(sp.adults) || 0);
   const children = Math.max(0, Number(sp.children) || 0);
 
-  const dateError = !from || !to ? "Pick check-in and check-out dates." : validateDates(from, to);
+  const dateError = !from || !to
+    ? "Pick check-in and check-out dates."
+    : validateDates(from, to);
 
-  const header = (
-    <PublicHeader
-      slug={property.slug}
-      name={property.name}
-      logoUrl={property.logoUrl}
-    />
-  );
+  const chrome = {
+    id: property.id,
+    slug: property.slug,
+    name: property.name,
+    logoUrl: property.logoUrl,
+    phone: property.phone,
+    primaryColor: property.primaryColor,
+  };
 
   if (dateError) {
     return (
-      <>
-        {header}
-        <main className="mx-auto max-w-3xl px-4 py-8">
-          <Link
-            href={`/p/${slug}`}
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            ← Back
-          </Link>
-          <h1 className="mt-2 text-2xl font-semibold">Find a site</h1>
-          <div className="mt-6 rounded-lg border bg-card p-6">
+      <PageShell
+        property={chrome}
+        breadcrumb={{
+          label: `Back to ${property.name.toLowerCase()}`,
+          href: `/p/${slug}`,
+        }}
+      >
+        <PageTitle lede={dateError}>find a site.</PageTitle>
+        <section className="mx-auto max-w-[1280px] px-6 pb-20 pt-10 md:px-8">
+          <div className="rounded-md border border-stone-200 bg-white p-6 md:p-7">
             <SearchForm
               slug={slug}
               defaults={{ from, to, adults, children }}
             />
-            <p className="mt-3 text-sm text-destructive">{dateError}</p>
           </div>
-        </main>
-      </>
+        </section>
+      </PageShell>
     );
   }
 
@@ -121,50 +135,57 @@ export default async function SearchPage({
   const checkOut = parseDateOnly(to);
   const now = new Date();
 
-  const [siteTypes, sites, ratePlans, modifiers, taxRates, addons, reservations, closedRanges] =
-    await Promise.all([
-      prisma.siteType.findMany({
-        where: { propertyId: property.id, deletedAt: null },
-      }),
-      prisma.site.findMany({
-        where: {
-          propertyId: property.id,
-          deletedAt: null,
-          active: true,
-        },
-        include: {
-          siteType: true,
-          // Just the first image for the search-card thumbnail.
-          images: { orderBy: { order: "asc" }, take: 1 },
-        },
-      }),
-      prisma.ratePlan.findMany({ where: { propertyId: property.id } }),
-      prisma.rateModifier.findMany({ where: { propertyId: property.id } }),
-      prisma.taxRate.findMany({ where: { propertyId: property.id } }),
-      prisma.addon.findMany({
-        where: { propertyId: property.id, active: true },
-      }),
-      prisma.reservation.findMany({
-        where: {
-          propertyId: property.id,
-          checkIn: { lt: checkOut },
-          checkOut: { gt: checkIn },
-          OR: [
-            { status: { in: ["CONFIRMED", "CHECKED_IN", "CHECKED_OUT"] } },
-            { AND: [{ status: "HELD" }, { heldUntil: { gt: now } }] },
-          ],
-        },
-        select: { siteId: true, checkIn: true, checkOut: true },
-      }),
-      prisma.closedDateRange.findMany({
-        where: {
-          propertyId: property.id,
-          startDate: { lte: checkOut },
-          endDate: { gte: checkIn },
-        },
-        select: { startDate: true, endDate: true },
-      }),
-    ]);
+  const [
+    siteTypes,
+    sites,
+    ratePlans,
+    modifiers,
+    taxRates,
+    addons,
+    reservations,
+    closedRanges,
+  ] = await Promise.all([
+    prisma.siteType.findMany({
+      where: { propertyId: property.id, deletedAt: null },
+    }),
+    prisma.site.findMany({
+      where: {
+        propertyId: property.id,
+        deletedAt: null,
+        active: true,
+      },
+      include: {
+        siteType: true,
+        images: { orderBy: { order: "asc" }, take: 1 },
+      },
+    }),
+    prisma.ratePlan.findMany({ where: { propertyId: property.id } }),
+    prisma.rateModifier.findMany({ where: { propertyId: property.id } }),
+    prisma.taxRate.findMany({ where: { propertyId: property.id } }),
+    prisma.addon.findMany({
+      where: { propertyId: property.id, active: true },
+    }),
+    prisma.reservation.findMany({
+      where: {
+        propertyId: property.id,
+        checkIn: { lt: checkOut },
+        checkOut: { gt: checkIn },
+        OR: [
+          { status: { in: ["CONFIRMED", "CHECKED_IN", "CHECKED_OUT"] } },
+          { AND: [{ status: "HELD" }, { heldUntil: { gt: now } }] },
+        ],
+      },
+      select: { siteId: true, checkIn: true, checkOut: true },
+    }),
+    prisma.closedDateRange.findMany({
+      where: {
+        propertyId: property.id,
+        startDate: { lte: checkOut },
+        endDate: { gte: checkIn },
+      },
+      select: { startDate: true, endDate: true },
+    }),
+  ]);
 
   const season: SeasonWindow | null =
     property.seasonStartMonth != null &&
@@ -216,10 +237,9 @@ export default async function SearchPage({
     id: a.id,
     name: a.name,
     priceCents: a.priceCents,
-    quantity: 0, // selection happens at checkout
+    quantity: 0,
   }));
 
-  // Group blocking reservations by siteId for fast lookup.
   const blockingBySite = new Map<string, { checkIn: Date; checkOut: Date }[]>();
   for (const r of reservations) {
     const list = blockingBySite.get(r.siteId) ?? [];
@@ -231,7 +251,6 @@ export default async function SearchPage({
     .filter((s) => siteTypes.some((st) => st.id === s.siteTypeId))
     .map((site): SiteOffer => {
       const st = site.siteType;
-      // Capacity check based on site-type rules.
       if (st.maxAdults != null && adults > st.maxAdults) {
         return {
           kind: "unavailable",
@@ -285,6 +304,13 @@ export default async function SearchPage({
           siteTypeName: st.name,
           tags: site.tags,
           thumbnailUrl: site.images[0]?.url ?? null,
+          spec: {
+            electricAmps: st.electricAmps,
+            hasWater: st.hasWater,
+            hasSewer: st.hasSewer,
+            maxAdults: st.maxAdults,
+            maxChildren: st.maxChildren,
+          },
           quote,
         };
       } catch (e) {
@@ -301,7 +327,6 @@ export default async function SearchPage({
       }
     });
 
-  // Natural-sort by label so "2" < "10" < "A1" etc.
   const collator = new Intl.Collator(undefined, {
     numeric: true,
     sensitivity: "base",
@@ -312,132 +337,295 @@ export default async function SearchPage({
     (o): o is Extract<SiteOffer, { kind: "available" }> =>
       o.kind === "available",
   );
-  const nights = Math.round((checkOut.getTime() - checkIn.getTime()) / ONE_DAY_MS);
+  const unavailable = offers.filter(
+    (o): o is Extract<SiteOffer, { kind: "unavailable" }> =>
+      o.kind === "unavailable",
+  );
+  const nights = Math.round(
+    (checkOut.getTime() - checkIn.getTime()) / ONE_DAY_MS,
+  );
+  const partyLabel = `${adults} adult${adults === 1 ? "" : "s"}${
+    children ? `, ${children} child${children === 1 ? "" : "ren"}` : ""
+  }`;
 
   return (
-    <>
-      {header}
-      <main className="mx-auto max-w-3xl px-4 py-8">
-        <Link
-          href={`/p/${slug}`}
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
-          ← Back
-        </Link>
-        <div className="mt-2">
-          <h1 className="text-2xl font-semibold">
-            {available.length} available site{available.length === 1 ? "" : "s"}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {from} → {to} · {nights} night{nights === 1 ? "" : "s"} · {adults}{" "}
-            adult{adults === 1 ? "" : "s"}
-            {children > 0
-              ? `, ${children} child${children === 1 ? "" : "ren"}`
-              : ""}
-          </p>
-        </div>
+    <PageShell
+      property={chrome}
+      breadcrumb={{
+        label: `Back to ${property.name.toLowerCase()}`,
+        href: `/p/${slug}`,
+      }}
+    >
+      <PageTitle
+        lede={
+          available.length === 0
+            ? "Try different dates or a smaller party. Unavailable sites are listed below with the reason."
+            : `Pick a site to continue to checkout. Total includes taxes and fees; you won't be charged until you confirm.`
+        }
+      >
+        {available.length === 0
+          ? "no sites available."
+          : `${available.length} site${
+              available.length === 1 ? "" : "s"
+            } for your dates.`}
+      </PageTitle>
 
-        <details className="mt-4 rounded-lg border bg-card p-4">
-          <summary className="cursor-pointer text-sm font-medium">
-            Refine search
-          </summary>
-          <div className="mt-3">
-            <SearchForm
-              slug={slug}
-              defaults={{ from, to, adults, children }}
-            />
+      {/* Trip strip — fixed-format itinerary card with Edit-search dropdown */}
+      <section className="mx-auto mt-8 max-w-[1280px] px-6 md:mt-10 md:px-8">
+        <div className="overflow-hidden rounded-md border border-stone-200 bg-white shadow-[0_24px_60px_-24px_rgba(20,15,8,0.18)]">
+          <div className="grid grid-cols-1 divide-y divide-stone-200 lg:grid-cols-12 lg:divide-x lg:divide-y-0">
+            <TripCell label="Check-in" big={dateNice(from)} sub={`${dow(from)} · after ${formatTime12(property.checkInTime)}`} className="lg:col-span-3" />
+            <TripCell label="Check-out" big={dateNice(to)} sub={`${dow(to)} · by ${formatTime12(property.checkOutTime)}`} className="lg:col-span-3" />
+            <TripCell label="Nights" big={String(nights)} sub={nights === 1 ? "1 night" : `${nights} nights`} className="lg:col-span-2" />
+            <TripCell label="Party" big={String(adults + children)} sub={partyLabel} className="lg:col-span-2" />
+            <details className="group p-6 lg:col-span-2">
+              <summary className="flex cursor-pointer items-center justify-end text-[13px] text-stone-700 hover:text-stone-900 [&::-webkit-details-marker]:hidden">
+                Edit search
+              </summary>
+              <div className="mt-4">
+                <SearchForm
+                  slug={slug}
+                  defaults={{ from, to, adults, children }}
+                />
+              </div>
+            </details>
           </div>
-        </details>
+        </div>
+      </section>
 
+      {/* Results */}
+      <section className="mx-auto max-w-[1280px] px-6 pb-20 pt-12 md:px-8">
         {available.length === 0 ? (
-          <div className="mt-6 rounded-md border bg-card p-6 text-center text-muted-foreground">
-            No sites available for the selected dates and party size.
-            {offers.length > 0
-              ? ` ${offers.length} site${offers.length === 1 ? " is" : "s are"} unavailable for these dates.`
-              : null}
+          <div className="rounded-md border border-dashed border-stone-300 bg-white p-10 text-center md:p-12">
+            <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-stone-500">
+              No availability
+            </div>
+            <p className="mx-auto mt-4 max-w-md text-[15px] leading-relaxed text-stone-600">
+              {unavailable.length > 0
+                ? `All ${unavailable.length} site${
+                    unavailable.length === 1 ? " is" : "s are"
+                  } taken or closed for ${dateNice(from)} – ${dateNice(to)}.`
+                : "There are no sites set up to take bookings for these dates."}
+            </p>
+            {property.phone ? (
+              <p className="mt-4 text-[14px] text-stone-700">
+                Or call{" "}
+                <a
+                  href={`tel:${property.phone}`}
+                  className="underline underline-offset-4 hover:text-stone-900"
+                >
+                  {property.phone}
+                </a>
+              </p>
+            ) : null}
           </div>
         ) : (
-          <ul className="mt-6 space-y-3">
-            {available.map((o) => (
-              <li
-                key={o.siteId}
-                className="rounded-md border bg-card p-4 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  {o.thumbnailUrl ? (
-                    <div className="aspect-[4/3] w-24 shrink-0 overflow-hidden rounded-md bg-muted">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={o.thumbnailUrl}
-                        alt={`Site ${o.label}`}
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
-                  ) : null}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-medium">Site {o.label}</h3>
-                      <span className="text-xs text-muted-foreground">
-                        · {o.siteTypeName}
-                      </span>
-                    </div>
-                    {o.tags.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {o.tags.map((t) => (
-                          <Badge key={t} variant="outline">
-                            {t}
-                          </Badge>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xl font-semibold tabular-nums">
-                      {formatCents(
-                        effectiveTotalCents(
-                          o.quote.totalCents,
-                          property.organization,
-                        ),
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      total · {nights} night{nights === 1 ? "" : "s"}
-                    </div>
-                    <Button asChild className="mt-2">
-                      <Link
-                        href={`/p/${slug}/checkout?siteId=${o.siteId}&from=${from}&to=${to}&adults=${adults}&children=${children}`}
-                      >
-                        Book this site
-                      </Link>
-                    </Button>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <>
+            <div className="mb-5 flex items-center justify-between">
+              <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-stone-500">
+                Available sites · {available.length}
+              </div>
+              <div className="text-[12px] text-stone-500">
+                Sorted by site number
+              </div>
+            </div>
+            <ul className="space-y-3">
+              {available.map((o) => (
+                <SiteCard
+                  key={o.siteId}
+                  offer={o}
+                  slug={slug}
+                  from={from}
+                  to={to}
+                  adults={adults}
+                  children={children}
+                  nights={nights}
+                  totalCents={effectiveTotalCents(
+                    o.quote.totalCents,
+                    property.organization,
+                  )}
+                />
+              ))}
+            </ul>
+          </>
         )}
 
-        {offers.length > available.length ? (
-          <details className="mt-6 rounded-md border bg-muted/30 p-4 text-sm">
-            <summary className="cursor-pointer text-muted-foreground">
-              {offers.length - available.length} unavailable site
-              {offers.length - available.length === 1 ? "" : "s"}
-            </summary>
-            <ul className="mt-3 space-y-1">
-              {offers
-                .filter((o): o is Extract<SiteOffer, { kind: "unavailable" }> =>
-                  o.kind === "unavailable",
-                )
-                .map((o) => (
-                  <li key={o.siteId} className="text-muted-foreground">
-                    Site {o.label} · {o.siteTypeName} —{" "}
-                    <span className="text-xs">{o.reason}</span>
-                  </li>
-                ))}
+        {unavailable.length > 0 ? (
+          <div className="mt-14">
+            <div className="flex items-baseline justify-between border-b border-stone-200 pb-3">
+              <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-stone-500">
+                Unavailable for these dates · {unavailable.length}
+              </div>
+              <div className="text-[11.5px] text-stone-400">
+                Reasons shown below
+              </div>
+            </div>
+            <ul className="divide-y divide-stone-200/80">
+              {unavailable.map((o) => (
+                <li
+                  key={o.siteId}
+                  className="grid grid-cols-12 items-baseline gap-4 py-3.5 text-[13.5px] sm:gap-6"
+                >
+                  <div className="col-span-3 font-serif text-[18px] leading-none text-stone-400 tabular-nums sm:col-span-2">
+                    site {o.label}
+                  </div>
+                  <div className="col-span-9 text-[12px] uppercase tracking-[0.16em] text-stone-400 sm:col-span-4">
+                    {o.siteTypeName}
+                  </div>
+                  <div className="col-span-12 text-stone-500 sm:col-span-6 sm:text-right">
+                    {o.reason}
+                  </div>
+                </li>
+              ))}
             </ul>
-          </details>
+          </div>
         ) : null}
-      </main>
-    </>
+      </section>
+    </PageShell>
+  );
+}
+
+function TripCell({
+  label,
+  big,
+  sub,
+  className = "",
+}: {
+  label: string;
+  big: string;
+  sub: string;
+  className?: string;
+}) {
+  return (
+    <div className={`p-6 ${className}`}>
+      <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-stone-500">
+        {label}
+      </div>
+      <div className="mt-1.5 font-serif text-[28px] leading-none text-stone-900">
+        {big}
+      </div>
+      <div className="mt-1 text-[12px] text-stone-500">{sub}</div>
+    </div>
+  );
+}
+
+function SiteCard({
+  offer,
+  slug,
+  from,
+  to,
+  adults,
+  children,
+  nights,
+  totalCents,
+}: {
+  offer: Extract<SiteOffer, { kind: "available" }>;
+  slug: string;
+  from: string;
+  to: string;
+  adults: number;
+  children: number;
+  nights: number;
+  totalCents: number;
+}) {
+  const checkoutHref = `/p/${slug}/checkout?siteId=${offer.siteId}&from=${from}&to=${to}&adults=${adults}&children=${children}`;
+  const nightlyCents = Math.round(offer.quote.totalCents / Math.max(nights, 1));
+  return (
+    <li className="overflow-hidden rounded-md border border-stone-200 bg-white shadow-[0_8px_24px_-12px_rgba(20,15,8,0.12)] transition hover:shadow-[0_16px_40px_-16px_rgba(20,15,8,0.18)]">
+      <div className="grid grid-cols-1 lg:grid-cols-12">
+        {/* Thumbnail */}
+        <div className="aspect-[16/10] bg-stone-100 lg:col-span-3 lg:aspect-auto">
+          {offer.thumbnailUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={offer.thumbnailUrl}
+              alt={`Site ${offer.label}`}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="grid h-full place-items-center bg-[var(--brand-50)] p-6">
+              <div className="font-serif text-[44px] leading-none text-[var(--brand-900)]/40">
+                {offer.label}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Body */}
+        <div className="border-stone-200 p-5 md:p-6 lg:col-span-6 lg:border-l">
+          <div className="flex items-baseline gap-3">
+            <h3 className="font-serif text-[24px] leading-none text-stone-900 md:text-[28px]">
+              site {offer.label}
+            </h3>
+            <span className="text-[12px] uppercase tracking-[0.18em] text-stone-500">
+              {offer.siteTypeName}
+            </span>
+          </div>
+
+          <dl className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] text-stone-600">
+            {offer.spec.electricAmps != null ? (
+              <SpecChip k="Electric" v={`${offer.spec.electricAmps}A`} />
+            ) : null}
+            <SpecChip k="Water" v={offer.spec.hasWater ? "Yes" : "No"} />
+            <SpecChip k="Sewer" v={offer.spec.hasSewer ? "Yes" : "No"} />
+            {offer.spec.maxAdults != null ? (
+              <SpecChip
+                k="Max"
+                v={`${offer.spec.maxAdults}A${
+                  offer.spec.maxChildren ? ` · ${offer.spec.maxChildren}C` : ""
+                }`}
+              />
+            ) : null}
+          </dl>
+
+          {offer.tags.length > 0 ? (
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              {offer.tags.map((t) => (
+                <span
+                  key={t}
+                  className="inline-flex items-center rounded-full border border-stone-300 bg-transparent px-2.5 py-0.5 text-[11.5px] font-medium text-stone-700"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Price + CTA */}
+        <div className="flex flex-col justify-between gap-4 border-stone-200 p-5 md:p-6 lg:col-span-3 lg:border-l">
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-stone-500">
+              Total
+            </div>
+            <div className="mt-1.5 font-serif text-[28px] leading-none text-stone-900 tabular-nums md:text-[32px]">
+              {formatCents(totalCents)}
+            </div>
+            <div className="mt-2 text-[11.5px] leading-tight text-stone-500 tabular-nums">
+              {formatCents(nightlyCents)} × {nights} night{nights === 1 ? "" : "s"}
+              <br />
+              <span className="text-stone-400">+ taxes &amp; fees</span>
+            </div>
+          </div>
+          <Link
+            href={checkoutHref}
+            className="inline-flex h-10 items-center justify-center rounded-md bg-[var(--brand)] px-4 text-[13.5px] font-medium tracking-tight text-white transition hover:opacity-90"
+          >
+            Book this site →
+          </Link>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function SpecChip({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span className="text-[10.5px] uppercase tracking-[0.16em] text-stone-400">
+        {k}
+      </span>
+      <span className="font-medium text-stone-800">{v}</span>
+    </div>
   );
 }
