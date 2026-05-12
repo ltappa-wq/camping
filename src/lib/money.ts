@@ -80,3 +80,31 @@ export function formatBasisPoints(bps: number): string {
     maximumFractionDigits: 2,
   })}%`;
 }
+
+/**
+ * Banker's rounding (half-to-even). Reduces statistical bias vs. half-up
+ * rounding when fractional cents need to land on integers — half-up
+ * always nudges totals upward over a long sequence; half-to-even averages
+ * out. Used in pricing.ts for tax + percent-modifier amounts.
+ *
+ * Examples:
+ *   bankersRound(0.5) = 0       (0 is even)
+ *   bankersRound(1.5) = 2       (2 is even)
+ *   bankersRound(2.5) = 2       (2 is even)
+ *   bankersRound(3.5) = 4       (4 is even)
+ *   bankersRound(2.4) = 2       (normal floor)
+ *   bankersRound(2.6) = 3       (normal ceil)
+ *
+ * Negatives: floor toward -∞, then the same even-tiebreak applies.
+ *   bankersRound(-0.5) = 0      (floor=-1, +1 → 0; 0 is even)
+ *   bankersRound(-1.5) = -2     (floor=-2, even, return -2)
+ *   bankersRound(-2.5) = -2     (floor=-3, +1 → -2; even)
+ */
+export function bankersRound(n: number): number {
+  const floor = Math.floor(n);
+  const diff = n - floor;
+  if (diff < 0.5) return floor;
+  if (diff > 0.5) return floor + 1;
+  // Exactly 0.5 — round to even.
+  return floor % 2 === 0 ? floor : floor + 1;
+}

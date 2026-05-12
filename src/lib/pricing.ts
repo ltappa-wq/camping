@@ -4,11 +4,17 @@
 // needed); see `QuoteRequest`. Output is a structured Quote: cent-accurate
 // totals plus line items the caller can snapshot onto a Reservation.
 //
-// Rounding: Math.round (half-up). Per-night PERCENT modifier amounts are
-// rounded to the cent each night before summing — avoids fractional drift
-// that would otherwise creep into the displayed total.
+// Rounding: banker's rounding (half-to-even) for tax + percent modifiers.
+// Per-night PERCENT modifier amounts are rounded to the cent each night
+// before summing — avoids fractional drift that would otherwise creep into
+// the displayed total.
+//
+// Decision: no backfill of historical reservations to the new rounding —
+// the per-reservation delta is at most a fractional cent, and existing
+// reservations carry their snapshotted line items unchanged.
 
 import { nightsBetween } from "./availability";
+import { bankersRound } from "./money";
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -258,7 +264,7 @@ function applyModifier(
       amount += m.modifierValue;
     } else {
       // PERCENT: signed bps applied to the night's base, rounded to the cent.
-      amount += Math.round((perNightBaseCents * m.modifierValue) / 10000);
+      amount += bankersRound((perNightBaseCents * m.modifierValue) / 10000);
     }
   }
   return { amountCents: amount, matchingNights: matching };
@@ -289,7 +295,7 @@ export function computeQuote(request: QuoteRequest): Quote {
   // surcharge on a stay packed as 1×Weekly+2×Nightly applies the same
   // amount on every Friday night, not different amounts based on which
   // unit "owns" that night.
-  const perNightBaseCents = Math.round(baseCents / nights);
+  const perNightBaseCents = bankersRound(baseCents / nights);
 
   const lineItems: LineItem[] = stayLines.map((sl) => ({
     kind: "BASE",
@@ -350,7 +356,7 @@ export function computeQuote(request: QuoteRequest): Quote {
     if (t.appliesTo === "STAY" || t.appliesTo === "ALL") subject += stayTaxable;
     if (t.appliesTo === "ADDON" || t.appliesTo === "ALL") subject += addonsCents;
     if (subject <= 0) continue;
-    const amount = Math.round((subject * t.basisPoints) / 10000);
+    const amount = bankersRound((subject * t.basisPoints) / 10000);
     if (amount === 0) continue;
     taxCents += amount;
     lineItems.push({
