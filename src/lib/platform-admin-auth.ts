@@ -51,15 +51,9 @@ const isProd = process.env.NODE_ENV === "production";
  */
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
-function bootstrapAllowlist(): Set<string> {
-  const raw = process.env.PLATFORM_ADMIN_BOOTSTRAP_EMAILS ?? "";
-  return new Set(
-    raw
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
+import { isInBootstrapAllowlist as inAllowlist } from "./platform-admin-allowlist";
+// Re-export so existing call sites keep working without churn.
+export { isInBootstrapAllowlist } from "./platform-admin-allowlist";
 
 export const {
   handlers: platformAdminHandlers,
@@ -127,7 +121,7 @@ export const {
           // Fall back to the bootstrap allowlist; on a match, auto-create
           // the PlatformAdmin row (so subsequent sign-ins go through the
           // first branch).
-          if (!bootstrapAllowlist().has(email)) {
+          if (!inAllowlist(email)) {
             return null;
           }
           admin = await prisma.platformAdmin.create({
@@ -247,7 +241,6 @@ export async function requirePlatformAdminSession(): Promise<PlatformAdminSessio
   return session;
 }
 
-/** True when the supplied email matches the env allowlist. */
-export function isInBootstrapAllowlist(email: string): boolean {
-  return bootstrapAllowlist().has(email.trim().toLowerCase());
-}
+// isInBootstrapAllowlist is re-exported above from
+// ./platform-admin-allowlist so tests can import it without pulling
+// next-auth into the test runtime.

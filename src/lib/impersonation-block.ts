@@ -13,15 +13,10 @@
 
 import { getPlatformAdminSession } from "@/lib/platform-admin-auth";
 
-export class ImpersonationBlockedError extends Error {
-  constructor(message?: string) {
-    super(
-      message ??
-        "This action cannot be performed while impersonating. Contact the operator directly.",
-    );
-    this.name = "ImpersonationBlockedError";
-  }
-}
+// Re-export from a pure module so tests can import the error class
+// without dragging next-auth into the test runtime.
+export { ImpersonationBlockedError } from "./impersonation-block-error";
+import { ImpersonationBlockedError } from "./impersonation-block-error";
 
 /**
  * Throws ImpersonationBlockedError if the current request is from a
