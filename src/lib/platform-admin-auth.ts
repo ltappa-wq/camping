@@ -66,6 +66,7 @@ export const {
   auth: platformAdminAuth,
   signIn: platformAdminSignIn,
   signOut: platformAdminSignOut,
+  unstable_update: platformAdminUpdateSession,
 } = NextAuth({
   basePath: "/api/platform-admin-auth",
   session: { strategy: "jwt", maxAge: SESSION_MAX_AGE },

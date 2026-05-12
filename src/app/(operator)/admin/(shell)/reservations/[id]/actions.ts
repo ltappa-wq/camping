@@ -339,7 +339,9 @@ export async function cancelReservationAction(
         refund_application_fee: false,
         metadata: {
           reservationId: reservation.id,
-          operatorId: ctx.operator.id,
+          // Empty string when a platform admin is impersonating — the
+          // PlatformAdminAction audit row carries that identity.
+          operatorId: ctx.operator?.id ?? "",
         },
       });
       stripeRefundId = refund.id;

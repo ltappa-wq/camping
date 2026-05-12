@@ -257,7 +257,9 @@ export async function createManualReservationAction(
         stayType: payload.stayType,
         status: "CONFIRMED",
         confirmedAt: new Date(),
-        createdByOperatorId: ctx.operator.id,
+        // null when a platform admin is impersonating — the
+        // PlatformAdminAction audit row carries that identity.
+        createdByOperatorId: ctx.operator?.id ?? null,
         subtotalCents: payload.subtotalCents,
         taxCents: payload.taxCents,
         totalCents: payload.totalCents,
