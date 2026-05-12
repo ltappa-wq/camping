@@ -6,7 +6,6 @@ import { z } from "zod";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { textToHtml } from "@/lib/email-templates/render";
 import {
-  CUSTOMIZABLE_TEMPLATE_TYPES,
   isCustomizableType,
   type CustomizableTemplateType,
 } from "@/lib/email-templates/variables";
@@ -85,5 +84,3 @@ export async function resetEmailTemplate(type: string): Promise<ActionResult> {
   revalidatePath(`/admin/emails/${type}`);
   return { ok: true };
 }
-
-export const ALL_CUSTOMIZABLE_TYPES = CUSTOMIZABLE_TEMPLATE_TYPES;

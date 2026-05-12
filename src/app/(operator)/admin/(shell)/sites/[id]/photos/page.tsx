@@ -9,10 +9,10 @@ import { Button } from "@/components/ui/button";
 import {
   deleteSiteGalleryImage,
   reorderSiteGallery,
-  SITE_GALLERY_MAX,
   updateSiteImageCaption,
   uploadSiteGalleryImage,
 } from "./actions";
+import { SITE_GALLERY_MAX } from "./constants";
 
 export const dynamic = "force-dynamic";
 

@@ -7,8 +7,7 @@ import {
   deletePropertyPhotoByUrl,
   uploadPropertyPhoto,
 } from "@/lib/storage";
-
-export const PROPERTY_GALLERY_MAX = 20;
+import { PROPERTY_GALLERY_MAX } from "./constants";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
