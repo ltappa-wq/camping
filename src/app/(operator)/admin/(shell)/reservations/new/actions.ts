@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { prisma } from "@/lib/prisma";
 import {
@@ -363,6 +364,23 @@ export async function createManualReservationAction(
       content,
     });
   }
+
+  await logIfImpersonating({
+    action: "reservation.create_manual",
+    description: `Manually created reservation ${reservation.confirmationCode} for ${guest.name}`,
+    propertyId: ctx.propertyId,
+    payload: {
+      reservationId: reservation.id,
+      confirmationCode: reservation.confirmationCode,
+      guestEmail: email,
+      siteId: site.id,
+      checkIn,
+      checkOut,
+      totalCents: payload.totalCents,
+      paymentMethod:
+        input.payment.kind === "paid" ? input.payment.method : "UNPAID",
+    },
+  });
 
   revalidatePath("/admin/reservations");
   return { ok: true, reservationId: reservation.id };

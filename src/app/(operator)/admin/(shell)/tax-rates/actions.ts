@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { percentToBasisPoints } from "@/lib/money";
 import { taxRateFormSchema, type TaxRateFormParsed } from "./schema";
@@ -41,13 +42,37 @@ export async function saveTaxRate(
     });
   }
 
+  await logIfImpersonating({
+    action: v.id ? "tax_rate.update" : "tax_rate.create",
+    description: v.id
+      ? `Updated tax rate "${v.name}"`
+      : `Created tax rate "${v.name}"`,
+    propertyId: ctx.propertyId,
+    payload: {
+      taxRateId: v.id,
+      name: v.name,
+      basisPoints,
+      appliesTo: v.appliesTo,
+    },
+  });
+
   revalidatePath("/admin/tax-rates");
   return { ok: true };
 }
 
 export async function deleteTaxRate(id: string): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
+  const before = await ctx.prisma.taxRate.findUnique({
+    where: { id },
+    select: { name: true },
+  });
   await ctx.prisma.taxRate.delete({ where: { id } });
+  await logIfImpersonating({
+    action: "tax_rate.delete",
+    description: `Deleted tax rate "${before?.name ?? id}"`,
+    propertyId: ctx.propertyId,
+    payload: { taxRateId: id },
+  });
   revalidatePath("/admin/tax-rates");
   return { ok: true };
 }
@@ -57,9 +82,15 @@ export async function toggleTaxRateActive(
   active: boolean,
 ): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
-  await ctx.prisma.taxRate.update({
+  const t = await ctx.prisma.taxRate.update({
     where: { id },
     data: { active },
+  });
+  await logIfImpersonating({
+    action: "tax_rate.toggle_active",
+    description: `${active ? "Activated" : "Deactivated"} tax rate "${t.name}"`,
+    propertyId: ctx.propertyId,
+    payload: { taxRateId: id, active },
   });
   revalidatePath("/admin/tax-rates");
   return { ok: true };

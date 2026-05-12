@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { countReservationsOverlappingClosure } from "@/lib/closed-dates";
 import {
@@ -75,6 +76,21 @@ export async function saveClosedDateRange(
     });
   }
 
+  await logIfImpersonating({
+    action: v.id ? "closed_date.update" : "closed_date.create",
+    description: v.id
+      ? `Updated closed-date range ${v.startDate} → ${v.endDate}`
+      : `Closed dates ${v.startDate} → ${v.endDate}`,
+    propertyId: ctx.propertyId,
+    payload: {
+      id: v.id,
+      startDate: v.startDate,
+      endDate: v.endDate,
+      reason: v.reason,
+      overlappingReservations,
+    },
+  });
+
   revalidatePath("/admin/closed-dates");
   return { ok: true, overlappingReservations };
 }
@@ -83,7 +99,19 @@ export async function deleteClosedDateRange(
   id: string,
 ): Promise<DeleteResult> {
   const ctx = await requireOperatorPropertyOrSetup();
+  const before = await ctx.prisma.closedDateRange.findUnique({
+    where: { id },
+    select: { startDate: true, endDate: true },
+  });
   await ctx.prisma.closedDateRange.delete({ where: { id } });
+  await logIfImpersonating({
+    action: "closed_date.delete",
+    description: before
+      ? `Removed closed-date range ${before.startDate.toISOString().slice(0, 10)} → ${before.endDate.toISOString().slice(0, 10)}`
+      : "Removed a closed-date range",
+    propertyId: ctx.propertyId,
+    payload: { id },
+  });
   revalidatePath("/admin/closed-dates");
   return { ok: true };
 }

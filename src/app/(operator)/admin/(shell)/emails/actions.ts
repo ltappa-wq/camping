@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { textToHtml } from "@/lib/email-templates/render";
 import {
@@ -62,6 +63,13 @@ export async function saveEmailTemplate(values: {
     },
   });
 
+  await logIfImpersonating({
+    action: "email_template.update",
+    description: `Customized email template ${type}`,
+    propertyId: ctx.propertyId,
+    payload: { type, subjectLength: v.subject.length, bodyLength: v.bodyText.length },
+  });
+
   revalidatePath("/admin/emails");
   revalidatePath(`/admin/emails/${type}`);
   return { ok: true };
@@ -78,6 +86,13 @@ export async function resetEmailTemplate(type: string): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
   await ctx.prisma.emailTemplate.deleteMany({
     where: { propertyId: ctx.propertyId, type: type as CustomizableTemplateType },
+  });
+
+  await logIfImpersonating({
+    action: "email_template.reset",
+    description: `Reset email template ${type} to default`,
+    propertyId: ctx.propertyId,
+    payload: { type },
   });
 
   revalidatePath("/admin/emails");

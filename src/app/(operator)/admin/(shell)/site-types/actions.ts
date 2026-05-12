@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { siteTypeFormSchema, type SiteTypeFormParsed } from "./schema";
 
@@ -41,15 +42,30 @@ export async function saveSiteType(
     });
   }
 
+  await logIfImpersonating({
+    action: v.id ? "site_type.update" : "site_type.create",
+    description: v.id
+      ? `Updated site type "${v.name}"`
+      : `Created site type "${v.name}"`,
+    propertyId: ctx.propertyId,
+    payload: { siteTypeId: v.id, name: v.name },
+  });
+
   revalidatePath("/admin/site-types");
   return { ok: true };
 }
 
 export async function archiveSiteType(id: string): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
-  await ctx.prisma.siteType.update({
+  const st = await ctx.prisma.siteType.update({
     where: { id },
     data: { deletedAt: new Date() },
+  });
+  await logIfImpersonating({
+    action: "site_type.archive",
+    description: `Archived site type "${st.name}"`,
+    propertyId: ctx.propertyId,
+    payload: { siteTypeId: id, name: st.name },
   });
   revalidatePath("/admin/site-types");
   return { ok: true };
@@ -57,9 +73,15 @@ export async function archiveSiteType(id: string): Promise<ActionResult> {
 
 export async function restoreSiteType(id: string): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
-  await ctx.prisma.siteType.update({
+  const st = await ctx.prisma.siteType.update({
     where: { id },
     data: { deletedAt: null },
+  });
+  await logIfImpersonating({
+    action: "site_type.restore",
+    description: `Restored site type "${st.name}"`,
+    propertyId: ctx.propertyId,
+    payload: { siteTypeId: id, name: st.name },
   });
   revalidatePath("/admin/site-types");
   return { ok: true };

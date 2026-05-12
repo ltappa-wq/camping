@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { dollarsToCents } from "@/lib/money";
 import { ratePlanFormSchema, type RatePlanFormParsed } from "./schema";
@@ -10,7 +11,6 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 
 function parseDateOnly(s: string | null): Date | null {
   if (!s) return null;
-  // "YYYY-MM-DD" → midnight UTC; Prisma stores as @db.Date so the time is dropped.
   return new Date(`${s}T00:00:00.000Z`);
 }
 
@@ -48,13 +48,37 @@ export async function saveRatePlan(
     });
   }
 
+  await logIfImpersonating({
+    action: v.id ? "rate_plan.update" : "rate_plan.create",
+    description: v.id
+      ? `Updated rate plan "${v.name}"`
+      : `Created rate plan "${v.name}"`,
+    propertyId: ctx.propertyId,
+    payload: {
+      ratePlanId: v.id,
+      name: v.name,
+      pricePerUnitCents: data.pricePerUnitCents,
+      chargeUnit: v.chargeUnit,
+    },
+  });
+
   revalidatePath("/admin/rate-plans");
   return { ok: true };
 }
 
 export async function deleteRatePlan(id: string): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
+  const before = await ctx.prisma.ratePlan.findUnique({
+    where: { id },
+    select: { name: true },
+  });
   await ctx.prisma.ratePlan.delete({ where: { id } });
+  await logIfImpersonating({
+    action: "rate_plan.delete",
+    description: `Deleted rate plan "${before?.name ?? id}"`,
+    propertyId: ctx.propertyId,
+    payload: { ratePlanId: id },
+  });
   revalidatePath("/admin/rate-plans");
   return { ok: true };
 }
@@ -64,9 +88,15 @@ export async function toggleRatePlanActive(
   active: boolean,
 ): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
-  await ctx.prisma.ratePlan.update({
+  const rp = await ctx.prisma.ratePlan.update({
     where: { id },
     data: { active },
+  });
+  await logIfImpersonating({
+    action: "rate_plan.toggle_active",
+    description: `${active ? "Activated" : "Deactivated"} rate plan "${rp.name}"`,
+    propertyId: ctx.propertyId,
+    payload: { ratePlanId: id, active },
   });
   revalidatePath("/admin/rate-plans");
   return { ok: true };

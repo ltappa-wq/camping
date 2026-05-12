@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { prisma } from "@/lib/prisma";
 import {
@@ -112,6 +113,13 @@ export async function updateGuestInfoAction(
     },
   });
 
+  await logIfImpersonating({
+    action: "reservation.update",
+    description: `Updated guest info on reservation ${input.reservationId}`,
+    propertyId: ctx.propertyId,
+    payload: { reservationId: input.reservationId, kind: "guest_info" },
+  });
+
   revalidatePath(`/admin/reservations/${input.reservationId}`);
   return { ok: true };
 }
@@ -135,6 +143,13 @@ export async function updateOperatorNotesAction(
   await prisma.guest.update({
     where: { id: reservation.guestId },
     data: { notes: notes.trim() || null },
+  });
+
+  await logIfImpersonating({
+    action: "reservation.update",
+    description: `Updated operator notes on reservation ${reservationId}`,
+    propertyId: ctx.propertyId,
+    payload: { reservationId, kind: "operator_notes" },
   });
 
   revalidatePath(`/admin/reservations/${reservationId}`);
@@ -232,6 +247,13 @@ export async function resendConfirmationAction(
     type: "RESERVATION_CONFIRMATION",
     to: reservation.guest.email,
     content,
+  });
+
+  await logIfImpersonating({
+    action: "reservation.resend_confirmation",
+    description: `Resent confirmation for ${reservation.confirmationCode}`,
+    propertyId: ctx.propertyId,
+    payload: { reservationId, sendOk: send.ok },
   });
 
   revalidatePath(`/admin/reservations/${reservationId}`);
@@ -424,6 +446,23 @@ export async function cancelReservationAction(
     });
   }
 
+  await logIfImpersonating({
+    action:
+      refundCents > 0 ? "reservation.refund" : "reservation.cancel",
+    description:
+      refundCents > 0
+        ? `Cancelled ${reservation.confirmationCode} with ${formatCentsBare(refundCents)} refund`
+        : `Cancelled ${reservation.confirmationCode}`,
+    propertyId: ctx.propertyId,
+    payload: {
+      reservationId: reservation.id,
+      confirmationCode: reservation.confirmationCode,
+      refundCents,
+      reason,
+      stripeRefundId,
+    },
+  });
+
   revalidatePath(`/admin/reservations/${reservation.id}`);
   revalidatePath("/admin/reservations");
 
@@ -433,6 +472,12 @@ export async function cancelReservationAction(
 function appendNote(prev: string | null, addition: string): string {
   if (!prev) return addition;
   return `${prev}\n${addition}`;
+}
+
+/** Tiny inline cents-to-USD formatter for audit descriptions; avoids
+ *  pulling formatCents through the action layer just for display. */
+function formatCentsBare(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -718,6 +763,20 @@ export async function editReservationAction(
     }
     throw err;
   }
+
+  await logIfImpersonating({
+    action: "reservation.update",
+    description: `Edited reservation ${reservation.confirmationCode}`,
+    propertyId: ctx.propertyId,
+    payload: {
+      reservationId: reservation.id,
+      newSiteId: input.siteId,
+      newCheckIn: input.from,
+      newCheckOut: input.to,
+      newTotalCents: quote.totalCents,
+      kind: "edit",
+    },
+  });
 
   revalidatePath(`/admin/reservations/${reservation.id}`);
   revalidatePath("/admin/reservations");

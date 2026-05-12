@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { prisma } from "@/lib/prisma";
 import {
@@ -58,15 +59,30 @@ export async function saveSite(
     throw e;
   }
 
+  await logIfImpersonating({
+    action: v.id ? "site.update" : "site.create",
+    description: v.id
+      ? `Updated site "${v.label}"`
+      : `Created site "${v.label}"`,
+    propertyId: ctx.propertyId,
+    payload: { siteId: v.id, label: v.label, tags: v.tags, active: v.active },
+  });
+
   revalidatePath("/admin/sites");
   return { ok: true };
 }
 
 export async function archiveSite(id: string): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
-  await ctx.prisma.site.update({
+  const site = await ctx.prisma.site.update({
     where: { id },
     data: { deletedAt: new Date(), active: false },
+  });
+  await logIfImpersonating({
+    action: "site.archive",
+    description: `Archived site "${site.label}"`,
+    propertyId: ctx.propertyId,
+    payload: { siteId: id, label: site.label },
   });
   revalidatePath("/admin/sites");
   return { ok: true };
@@ -74,9 +90,15 @@ export async function archiveSite(id: string): Promise<ActionResult> {
 
 export async function restoreSite(id: string): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
-  await ctx.prisma.site.update({
+  const site = await ctx.prisma.site.update({
     where: { id },
     data: { deletedAt: null },
+  });
+  await logIfImpersonating({
+    action: "site.restore",
+    description: `Restored site "${site.label}"`,
+    propertyId: ctx.propertyId,
+    payload: { siteId: id, label: site.label },
   });
   revalidatePath("/admin/sites");
   return { ok: true };
@@ -87,9 +109,15 @@ export async function toggleSiteActive(
   active: boolean,
 ): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
-  await ctx.prisma.site.update({
+  const site = await ctx.prisma.site.update({
     where: { id },
     data: { active },
+  });
+  await logIfImpersonating({
+    action: "site.toggle_active",
+    description: `${active ? "Activated" : "Deactivated"} site "${site.label}"`,
+    propertyId: ctx.propertyId,
+    payload: { siteId: id, active },
   });
   revalidatePath("/admin/sites");
   return { ok: true };
@@ -161,6 +189,17 @@ export async function bulkCreateSites(
     }
     throw e;
   }
+
+  await logIfImpersonating({
+    action: "site.bulk_create",
+    description: `Bulk-created ${labels.length} site${labels.length === 1 ? "" : "s"}`,
+    propertyId: ctx.propertyId,
+    payload: {
+      siteTypeId: v.siteTypeId,
+      labelsFirst: labels.slice(0, 3),
+      labelsCount: labels.length,
+    },
+  });
 
   revalidatePath("/admin/sites");
   return { ok: true, createdCount: labels.length };

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireOperatorProperty } from "@/lib/auth-property";
 import {
@@ -93,6 +94,23 @@ export async function saveProperty(
       // Non-fatal: orphaned objects can be cleaned up later.
     }
   }
+
+  await logIfImpersonating({
+    action: "property.update",
+    description: `Updated property settings`,
+    propertyId: ctx.propertyId,
+    payload: {
+      name: v.name,
+      // Capture the touchy fields most likely to matter on review.
+      seasonStartMonth: v.seasonStartMonth ?? null,
+      seasonEndMonth: v.seasonEndMonth ?? null,
+      checkInTime: v.checkInTime,
+      checkOutTime: v.checkOutTime,
+      cancelFullRefundDays: v.cancelFullRefundDays,
+      cancelPartialRefundDays: v.cancelPartialRefundDays,
+      cancelPartialRefundPct: v.cancelPartialRefundPct,
+    },
+  });
 
   revalidatePath("/admin/property");
   revalidatePath(`/p/${ctx.property.slug}`);

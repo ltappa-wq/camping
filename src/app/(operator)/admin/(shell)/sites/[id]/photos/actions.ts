@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { deleteSitePhotoByUrl, uploadSitePhoto } from "@/lib/storage";
 import { SITE_GALLERY_MAX } from "./constants";
@@ -86,6 +87,13 @@ export async function uploadSiteGalleryImage(
     },
   });
 
+  await logIfImpersonating({
+    action: "photo.upload",
+    description: "Uploaded a site gallery image",
+    propertyId: ctx.propertyId,
+    payload: { url: publicUrl, siteId, kind: "site" },
+  });
+
   revalidatePath(`/admin/sites/${siteId}/photos`);
   revalidatePath(`/p/${ctx.property.slug}/search`);
   return { ok: true };
@@ -95,7 +103,6 @@ export async function deleteSiteGalleryImage(
   imageId: string,
 ): Promise<ActionResult> {
   const ctx = await requireOperatorPropertyOrSetup();
-  // Confirm the image's site is in this property by joining on site.propertyId.
   const image = await ctx.prisma.siteImage.findFirst({
     where: { id: imageId, site: { propertyId: ctx.propertyId } },
   });
@@ -107,6 +114,13 @@ export async function deleteSiteGalleryImage(
   } catch {
     // Non-fatal — orphaned object can be cleaned up later.
   }
+
+  await logIfImpersonating({
+    action: "photo.delete",
+    description: "Removed a site gallery image",
+    propertyId: ctx.propertyId,
+    payload: { imageId, siteId: image.siteId, kind: "site" },
+  });
 
   revalidatePath(`/admin/sites/${image.siteId}/photos`);
   revalidatePath(`/p/${ctx.property.slug}/search`);

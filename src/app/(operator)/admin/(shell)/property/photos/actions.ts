@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { logIfImpersonating } from "@/lib/audit";
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import {
   deletePropertyPhotoByUrl,
@@ -63,6 +64,13 @@ export async function uploadPropertyGalleryImage(
     },
   });
 
+  await logIfImpersonating({
+    action: "photo.upload",
+    description: "Uploaded a property gallery image",
+    propertyId: ctx.propertyId,
+    payload: { url: publicUrl, kind: "property" },
+  });
+
   revalidatePath("/admin/property/photos");
   revalidatePath(`/p/${ctx.property.slug}`);
   return { ok: true };
@@ -83,6 +91,13 @@ export async function deletePropertyGalleryImage(
   } catch {
     // Non-fatal — orphaned object can be cleaned up later.
   }
+
+  await logIfImpersonating({
+    action: "photo.delete",
+    description: "Removed a property gallery image",
+    propertyId: ctx.propertyId,
+    payload: { imageId, kind: "property" },
+  });
 
   revalidatePath("/admin/property/photos");
   revalidatePath(`/p/${ctx.property.slug}`);
