@@ -7,11 +7,11 @@ import { PhotoGallery } from "@/components/admin/photo-gallery";
 import { Button } from "@/components/ui/button";
 import {
   deletePropertyGalleryImage,
-  PROPERTY_GALLERY_MAX,
   reorderPropertyGallery,
   updatePropertyImageCaption,
   uploadPropertyGalleryImage,
 } from "./actions";
+import { PROPERTY_GALLERY_MAX } from "./constants";
 
 export const dynamic = "force-dynamic";
 

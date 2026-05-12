@@ -4,8 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requireOperatorPropertyOrSetup } from "@/lib/auth-property";
 import { deleteSitePhotoByUrl, uploadSitePhoto } from "@/lib/storage";
-
-export const SITE_GALLERY_MAX = 5;
+import { SITE_GALLERY_MAX } from "./constants";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
