@@ -36,7 +36,7 @@ import {
 } from "./actions";
 import { BulkSiteForm } from "./bulk-site-form";
 import { SiteForm, type SiteTypeOption } from "./site-form";
-import { formatTags, type SiteFormValues } from "./schema";
+import { type SiteFormValues } from "./schema";
 
 export type SiteRow = {
   id: string;
@@ -54,16 +54,18 @@ const EMPTY = (defaultSiteTypeId: string): SiteFormValues => ({
   siteTypeId: defaultSiteTypeId,
   label: "",
   notes: "",
-  tagsText: "",
+  tags: [],
   active: true,
 });
 
 export function SitesList({
   rows,
   siteTypes,
+  tagSuggestions,
 }: {
   rows: SiteRow[];
   siteTypes: SiteTypeOption[];
+  tagSuggestions: ReadonlyArray<string>;
 }) {
   const firstActiveType = siteTypes.find((t) => !t.archived)?.id ?? "";
   const [open, setOpen] = useState(false);
@@ -85,7 +87,7 @@ export function SitesList({
       siteTypeId: row.siteTypeId,
       label: row.label,
       notes: row.notes ?? "",
-      tagsText: formatTags(row.tags),
+      tags: row.tags,
       active: row.active,
     });
     setOpen(true);
@@ -265,6 +267,7 @@ export function SitesList({
           <SiteForm
             defaultValues={editing}
             siteTypes={siteTypes}
+            tagSuggestions={tagSuggestions}
             onSaved={() => setOpen(false)}
             onCancel={() => setOpen(false)}
           />
@@ -282,6 +285,7 @@ export function SitesList({
           </DialogHeader>
           <BulkSiteForm
             siteTypes={siteTypes}
+            tagSuggestions={tagSuggestions}
             onSaved={() => setBulkOpen(false)}
             onCancel={() => setBulkOpen(false)}
           />

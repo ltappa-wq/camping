@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TagInput } from "@/components/ui/tag-input";
 import { useToast } from "@/hooks/use-toast";
 import { bulkCreateSites } from "./actions";
 import {
@@ -44,10 +45,12 @@ function buildPreview(labels: string[]): string {
 
 export function BulkSiteForm({
   siteTypes,
+  tagSuggestions,
   onSaved,
   onCancel,
 }: {
   siteTypes: SiteTypeOption[];
+  tagSuggestions: ReadonlyArray<string>;
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -62,7 +65,7 @@ export function BulkSiteForm({
       prefix: "",
       startNumber: 1,
       count: 1,
-      tagsText: "",
+      tags: [],
     },
   });
 
@@ -211,19 +214,21 @@ export function BulkSiteForm({
 
         <FormField
           control={form.control}
-          name="tagsText"
+          name="tags"
           render={({ field }) => (
             <FormItem>
               <FormLabel>Default tags</FormLabel>
               <FormControl>
-                <Input
+                <TagInput
+                  value={field.value ?? []}
+                  onChange={field.onChange}
+                  suggestions={tagSuggestions}
                   placeholder="shaded, pull-through"
-                  {...field}
-                  value={field.value ?? ""}
+                  maxTags={20}
                 />
               </FormControl>
               <FormDescription>
-                Comma-separated. Applied to every new site.
+                Applied to every new site. Press Enter or comma to add.
               </FormDescription>
               <FormMessage />
             </FormItem>

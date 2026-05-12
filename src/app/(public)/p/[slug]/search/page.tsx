@@ -31,6 +31,7 @@ import {
   effectiveTotalCents,
   getPropertyWithOrgBySlug,
 } from "../_lib/property";
+import { TagFilter } from "./_components/tag-filter";
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -39,7 +40,20 @@ type SearchParams = {
   to?: string;
   adults?: string;
   children?: string;
+  tags?: string;
 };
+
+function parseTagsParam(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  );
+}
 
 function parseDateOnly(s: string): Date {
   return new Date(`${s}T00:00:00.000Z`);
@@ -95,6 +109,7 @@ export default async function SearchPage({
   const to = sp.to ?? "";
   const adults = Math.max(1, Number(sp.adults) || 0);
   const children = Math.max(0, Number(sp.children) || 0);
+  const selectedTags = parseTagsParam(sp.tags);
 
   const dateError = !from || !to
     ? "Pick check-in and check-out dates."
@@ -333,10 +348,25 @@ export default async function SearchPage({
   });
   offers.sort((a, b) => collator.compare(a.label, b.label));
 
-  const available = offers.filter(
-    (o): o is Extract<SiteOffer, { kind: "available" }> =>
+  // Build the tag suggestion pool from EVERY site (available or not) so
+  // the chip dropdown stays stable as the guest narrows the date window.
+  const tagPool = Array.from(
+    new Set(sites.flatMap((s) => s.tags)),
+  ).sort((a, b) => a.localeCompare(b));
+
+  // Apply the tag filter only to AVAILABLE offers; unavailable rows still
+  // show below regardless so the guest knows which sites exist.
+  const tagFiltered = (offer: SiteOffer): boolean => {
+    if (selectedTags.length === 0) return true;
+    if (offer.kind !== "available") return true;
+    return selectedTags.every((t) => offer.tags.includes(t));
+  };
+
+  const available = offers
+    .filter((o): o is Extract<SiteOffer, { kind: "available" }> =>
       o.kind === "available",
-  );
+    )
+    .filter(tagFiltered);
   const unavailable = offers.filter(
     (o): o is Extract<SiteOffer, { kind: "unavailable" }> =>
       o.kind === "unavailable",
@@ -392,6 +422,13 @@ export default async function SearchPage({
           </div>
         </div>
       </section>
+
+      {/* Tag filter — readOnly chips, picks from the property's tag set */}
+      {tagPool.length > 0 ? (
+        <section className="mx-auto mt-6 max-w-[1280px] px-6 md:px-8">
+          <TagFilter value={selectedTags} suggestions={tagPool} />
+        </section>
+      ) : null}
 
       {/* Results */}
       <section className="mx-auto max-w-[1280px] px-6 pb-20 pt-12 md:px-8">

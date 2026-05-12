@@ -15,6 +15,12 @@ export default async function SitesPage() {
     }),
   ]);
 
+  // Distinct tag pool across this property's sites — feeds the TagInput
+  // suggestion dropdown on the create/edit/bulk forms.
+  const tagSuggestions = Array.from(
+    new Set(sites.flatMap((s) => s.tags)),
+  ).sort((a, b) => a.localeCompare(b));
+
   // Natural-sort labels so "2" < "10" < "A1" < "A10".
   // Group order: active → inactive → archived; sort by label within each group.
   const labelCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
@@ -47,6 +53,7 @@ export default async function SitesPage() {
           name: t.name,
           archived: t.deletedAt != null,
         }))}
+        tagSuggestions={tagSuggestions}
       />
     </div>
   );

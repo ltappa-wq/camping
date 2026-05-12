@@ -1,29 +1,25 @@
 import { z } from "zod";
 
+// Tags are now a typed string[] driven by the TagInput chip widget.
+// Phase 6b dropped the legacy comma-separated tagsText field — operators
+// add chips directly in the UI and the form persists the array verbatim.
+
+const tagsArray = z
+  .array(z.string().trim().min(1).max(40))
+  .max(20)
+  .default([]);
+
 export const siteFormSchema = z.object({
   id: z.string().optional(),
   siteTypeId: z.string().min(1, "Pick a site type"),
   label: z.string().trim().min(1, "Label is required").max(40),
   notes: z.string().trim().max(2000).optional().nullable(),
-  // Comma-separated in the UI; we split / trim / dedupe before persisting.
-  tagsText: z.string().optional().default(""),
+  tags: tagsArray,
   active: z.boolean().default(true),
 });
 
 export type SiteFormValues = z.input<typeof siteFormSchema>;
 export type SiteFormParsed = z.output<typeof siteFormSchema>;
-
-export function parseTags(text: string): string[] {
-  const parts = text
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  return Array.from(new Set(parts));
-}
-
-export function formatTags(tags: string[]): string {
-  return tags.join(", ");
-}
 
 // ---- Bulk create ---------------------------------------------------------
 
@@ -34,7 +30,7 @@ export const bulkSiteFormSchema = z.object({
   prefix: z.string().trim().max(20).optional().default(""),
   startNumber: z.coerce.number().int().min(1).default(1),
   count: z.coerce.number().int().min(1).max(BULK_MAX_COUNT).default(1),
-  tagsText: z.string().optional().default(""),
+  tags: tagsArray,
 });
 
 export type BulkSiteFormValues = z.input<typeof bulkSiteFormSchema>;

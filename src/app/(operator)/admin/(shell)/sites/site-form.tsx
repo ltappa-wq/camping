@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { TagInput } from "@/components/ui/tag-input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { saveSite } from "./actions";
@@ -37,11 +38,15 @@ export type SiteTypeOption = {
 export function SiteForm({
   defaultValues,
   siteTypes,
+  tagSuggestions,
   onSaved,
   onCancel,
 }: {
   defaultValues: SiteFormValues;
   siteTypes: SiteTypeOption[];
+  /** Distinct tags already used elsewhere on this property — feeds the
+   *  TagInput's suggestion dropdown. */
+  tagSuggestions: ReadonlyArray<string>;
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -141,19 +146,22 @@ export function SiteForm({
 
         <FormField
           control={form.control}
-          name="tagsText"
+          name="tags"
           render={({ field }) => (
             <FormItem>
               <FormLabel>Tags</FormLabel>
               <FormControl>
-                <Input
+                <TagInput
+                  value={field.value ?? []}
+                  onChange={field.onChange}
+                  suggestions={tagSuggestions}
                   placeholder="shaded, pull-through, ADA"
-                  {...field}
-                  value={field.value ?? ""}
+                  maxTags={20}
                 />
               </FormControl>
               <FormDescription>
-                Comma-separated. Free-form keywords for filtering.
+                Free-form keywords for filtering. Press Enter or comma to
+                add; Backspace to remove the last.
               </FormDescription>
               <FormMessage />
             </FormItem>

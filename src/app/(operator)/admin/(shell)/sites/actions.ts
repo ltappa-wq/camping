@@ -9,7 +9,6 @@ import {
   bulkSiteFormSchema,
   findLabelCollisions,
   generateBulkLabels,
-  parseTags,
   siteFormSchema,
   type BulkSiteFormParsed,
   type SiteFormParsed,
@@ -29,13 +28,12 @@ export async function saveSite(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const v = parsed.data;
-  const tags = parseTags(v.tagsText ?? "");
 
   const data = {
     siteTypeId: v.siteTypeId,
     label: v.label,
     notes: v.notes ?? null,
-    tags,
+    tags: v.tags,
     active: v.active,
   };
 
@@ -116,7 +114,7 @@ export async function bulkCreateSites(
     startNumber: v.startNumber,
     count: v.count,
   });
-  const tags = parseTags(v.tagsText ?? "");
+  const tags = v.tags;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
