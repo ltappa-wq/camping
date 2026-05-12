@@ -12,6 +12,7 @@ import {
 } from "@/components/public/chrome";
 import { getPropertyBySlug } from "../_lib/property";
 import { guestSignOutAction } from "./actions";
+import { PaymentMethodsCard } from "./_components/payment-methods-card";
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -40,6 +41,11 @@ export default async function PortalHomePage({
   const { slug } = await params;
   const session = await requireGuestSession(slug);
   const property = await getPropertyBySlug(slug);
+
+  const guest = await prisma.guest.findUnique({
+    where: { id: session.guestId },
+    select: { stripeCustomerId: true },
+  });
 
   const reservations = await prisma.reservation.findMany({
     where: {
@@ -140,6 +146,13 @@ export default async function PortalHomePage({
             }
           />
         ) : null}
+
+        {/* Payment methods — show even in the empty state so guests
+            understand the lifecycle. */}
+        <PaymentMethodsCard
+          slug={slug}
+          hasSavedCustomer={Boolean(guest?.stripeCustomerId)}
+        />
 
         {current.length > 0 ? (
           <PortalSection
