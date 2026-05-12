@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
+import { customerArgsForCheckout } from "@/lib/stripe-customer";
 import { requireGuestSession } from "@/lib/guest-auth";
 import {
   checkAvailability,
@@ -343,6 +344,7 @@ export async function applyModificationAction(
       slug: input.slug,
       code: input.code,
       guestEmail: guest.email,
+      guestStripeCustomerId: guest.stripeCustomerId,
       siteLabel: newSite.label,
       reservationCheckIn: reservation.checkIn,
       reservationCheckOut: reservation.checkOut,
@@ -621,6 +623,7 @@ async function upchargePathway(args: {
   slug: string;
   code: string;
   guestEmail: string;
+  guestStripeCustomerId: string | null;
   siteLabel: string;
   reservationCheckIn: Date;
   reservationCheckOut: Date;
@@ -679,7 +682,14 @@ async function upchargePathway(args: {
           quantity: 1,
         },
       ],
-      customer_email: args.guestEmail,
+      // Phase 6b: pre-attach saved card for returning guests, mirroring
+      // the booking checkout. By Phase 5 the guest is signed in via the
+      // portal, so they generally already have a stripeCustomerId from
+      // their original booking.
+      ...customerArgsForCheckout({
+        email: args.guestEmail,
+        stripeCustomerId: args.guestStripeCustomerId,
+      }),
       payment_intent_data: {
         application_fee_amount:
           platformFeeCents > 0 ? platformFeeCents : undefined,

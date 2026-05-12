@@ -14,6 +14,7 @@ import {
 } from "@/lib/email";
 import { dispatchEmail } from "@/lib/email-dispatch";
 import { loadEmailTemplateOverride } from "@/lib/email-templates/load";
+import { extractStripeCustomerId } from "@/lib/stripe-customer";
 import { issueGuestProfileClaimLink } from "@/lib/guest-magic-link";
 import {
   checkAvailability,
@@ -133,6 +134,14 @@ async function handleCheckoutCompleted(
       ? session.payment_intent
       : session.payment_intent?.id ?? null;
 
+  // Pluck the Stripe Customer Stripe created for this session (set when
+  // we passed customer_creation: "always" or customer:). Capture it onto
+  // Guest.stripeCustomerId so future checkouts can pre-attach saved
+  // cards via the Customer Portal flow.
+  const stripeCustomerId = extractStripeCustomerId({
+    customer: session.customer,
+  });
+
   await prisma.$transaction(async (tx) => {
     if (!alreadyConfirmed) {
       await tx.reservation.update({
@@ -143,6 +152,16 @@ async function handleCheckoutCompleted(
           paidCents: session.amount_total ?? reservation.totalCents,
           heldUntil: null,
         },
+      });
+    }
+
+    // Only set on the first capture — leave existing values alone so we
+    // don't churn the ID if Stripe ever returns a different value on
+    // re-delivery.
+    if (stripeCustomerId && !reservation.guest.stripeCustomerId) {
+      await tx.guest.update({
+        where: { id: reservation.guestId },
+        data: { stripeCustomerId },
       });
     }
 

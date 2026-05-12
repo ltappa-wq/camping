@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 
 import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
+import { customerArgsForCheckout } from "@/lib/stripe-customer";
 import {
   checkAvailability,
   type SeasonWindow,
@@ -372,7 +373,16 @@ export async function startCheckout(
           ]
         : []),
     ],
-    customer_email: email,
+    // Phase 6b: returning guests with a saved Customer get
+    // saved-card-pre-attach in Stripe Checkout. First-time guests fall
+    // through to customer_email + customer_creation:"always", which
+    // tells Stripe to mint a Customer (so we can capture the ID in the
+    // webhook). Customers live on the platform here — destination-charge
+    // pattern keeps the ownership boundary simple.
+    ...customerArgsForCheckout({
+      email,
+      stripeCustomerId: guest.stripeCustomerId,
+    }),
     payment_intent_data: {
       application_fee_amount:
         platformFeeCents > 0 ? platformFeeCents : undefined,
