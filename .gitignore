@@ -41,3 +41,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Design handoff bundles (raw prototype source — translated into
+# real Next.js code in the public flow; the zip itself isn't tracked).
+/.design-handoff/
