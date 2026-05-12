@@ -1,20 +1,17 @@
 import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/money";
 import { requireGuestSession } from "@/lib/guest-auth";
-import { PublicHeader } from "../_components/public-header";
+import {
+  dateNice,
+  EmptyState,
+  nightsBetween,
+  PageShell,
+  StatusPill,
+} from "@/components/public/chrome";
 import { getPropertyBySlug } from "../_lib/property";
 import { guestSignOutAction } from "./actions";
-
-const STATUS_TONE: Record<string, string> = {
-  CONFIRMED: "bg-blue-500/10 text-blue-700 dark:text-blue-300",
-  CHECKED_IN: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  CHECKED_OUT: "bg-muted text-muted-foreground",
-  CANCELLED: "bg-destructive/10 text-destructive",
-  NO_SHOW: "bg-destructive/10 text-destructive line-through",
-};
 
 const ONE_DAY_MS = 86_400_000;
 
@@ -25,6 +22,16 @@ function todayUtc(): Date {
   );
 }
 
+type Reservation = {
+  id: string;
+  confirmationCode: string;
+  checkIn: Date;
+  checkOut: Date;
+  site: { label: string; siteType: { name: string } };
+  totalCents: number;
+  status: string;
+};
+
 export default async function PortalHomePage({
   params,
 }: {
@@ -34,9 +41,6 @@ export default async function PortalHomePage({
   const session = await requireGuestSession(slug);
   const property = await getPropertyBySlug(slug);
 
-  // Guest-scoped query — only reservations belonging to this guest at
-  // this property. HELD/DRAFT excluded; those are mid-flow internal
-  // states the guest shouldn't see.
   const reservations = await prisma.reservation.findMany({
     where: {
       guestId: session.guestId,
@@ -46,17 +50,21 @@ export default async function PortalHomePage({
       },
     },
     include: {
-      site: { select: { label: true } },
+      site: { select: { label: true, siteType: { select: { name: true } } } },
     },
     orderBy: { checkIn: "asc" },
   });
 
   const today = todayUtc();
-  const upcoming: typeof reservations = [];
-  const current: typeof reservations = [];
-  const past: typeof reservations = [];
+  const upcoming: Reservation[] = [];
+  const current: Reservation[] = [];
+  const past: Reservation[] = [];
   for (const r of reservations) {
-    if (r.status === "CHECKED_OUT" || r.status === "CANCELLED" || r.status === "NO_SHOW") {
+    if (
+      r.status === "CHECKED_OUT" ||
+      r.status === "CANCELLED" ||
+      r.status === "NO_SHOW"
+    ) {
       past.push(r);
       continue;
     }
@@ -64,7 +72,7 @@ export default async function PortalHomePage({
       current.push(r);
       continue;
     }
-    // Status is CONFIRMED — partition by date relative to today.
+    // CONFIRMED — partition by date relative to today.
     if (
       r.checkIn.getTime() <= today.getTime() &&
       r.checkOut.getTime() > today.getTime()
@@ -77,124 +85,251 @@ export default async function PortalHomePage({
     }
   }
 
+  const empty = reservations.length === 0;
+
+  const chrome = {
+    id: property.id,
+    slug: property.slug,
+    name: property.name,
+    logoUrl: property.logoUrl,
+    phone: property.phone,
+    primaryColor: property.primaryColor,
+  };
+
   return (
-    <>
-      <PublicHeader
-        slug={property.slug}
-        name={property.name}
-        logoUrl={property.logoUrl}
-      />
-      <main className="mx-auto max-w-3xl px-4 py-8 space-y-8">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">Your bookings</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Signed in as {session.email}.
+    <PageShell property={chrome}>
+      <section className="mx-auto max-w-[1280px] px-6 pt-4 md:px-8">
+        <div className="grid grid-cols-12 gap-6 md:gap-12">
+          <div className="col-span-12 lg:col-span-9">
+            <h1 className="font-serif text-5xl leading-[0.98] tracking-tight text-stone-900 md:text-6xl lg:text-[64px]">
+              your bookings.
+            </h1>
+            <p className="mt-4 text-[15px] leading-relaxed text-stone-600">
+              Signed in as{" "}
+              <span className="text-stone-900">{session.email}</span>. Open any
+              booking to view details, modify, or cancel.
             </p>
           </div>
-          <form action={guestSignOutAction}>
-            <input type="hidden" name="slug" value={slug} />
-            <Button type="submit" variant="outline" size="sm">
-              Sign out
-            </Button>
-          </form>
+          <div className="col-span-12 flex items-start justify-end pt-3 lg:col-span-3">
+            <form action={guestSignOutAction}>
+              <input type="hidden" name="slug" value={slug} />
+              <button
+                type="submit"
+                className="inline-flex h-9 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-[13px] font-medium text-stone-700 hover:bg-stone-50"
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
         </div>
+      </section>
 
-        {current.length > 0 ? (
-          <ReservationSection
-            title="Current stay"
-            tone="bg-emerald-500/5 border-emerald-500/30"
-            slug={slug}
-            rows={current}
+      <section className="mx-auto max-w-[1280px] space-y-10 px-6 pb-20 pt-12 md:px-8">
+        {empty ? (
+          <EmptyState
+            kicker="No bookings yet"
+            title="Your stays will live here."
+            body="Once you book a site, you'll be able to view, modify, and cancel it from this page."
+            actions={
+              <Link
+                href={`/p/${slug}`}
+                className="inline-flex h-10 items-center rounded-md bg-[var(--brand)] px-4 text-[13.5px] font-medium text-white hover:opacity-90"
+              >
+                Find a site at {property.name} →
+              </Link>
+            }
           />
         ) : null}
 
-        <ReservationSection
-          title="Upcoming"
-          tone=""
-          slug={slug}
-          rows={upcoming}
-          emptyState={
-            <p className="text-sm text-muted-foreground">
-              No upcoming reservations.{" "}
-              <Link href={`/p/${slug}`} className="underline">
-                Book your next stay at {property.name}
-              </Link>
-              .
-            </p>
-          }
-        />
+        {current.length > 0 ? (
+          <PortalSection
+            title="Currently staying"
+            rows={current}
+            slug={slug}
+            highlight
+          />
+        ) : null}
+
+        {!empty && upcoming.length === 0 && current.length === 0 ? (
+          <PortalSection
+            title="Upcoming"
+            rows={[]}
+            slug={slug}
+            emptyText={`No upcoming stays.`}
+            propertyName={property.name}
+          />
+        ) : null}
+
+        {upcoming.length > 0 ? (
+          <PortalSection title="Upcoming" rows={upcoming} slug={slug} />
+        ) : null}
 
         {past.length > 0 ? (
-          <details className="rounded-lg border bg-card">
-            <summary className="cursor-pointer px-5 py-3 text-sm font-medium">
-              Past stays ({past.length})
-            </summary>
-            <div className="border-t px-5 py-4">
-              <ul className="space-y-2">
-                {past.map((r) => (
-                  <ReservationRow key={r.id} slug={slug} reservation={r} />
-                ))}
-              </ul>
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-stone-500">
+              Past stays · {past.length}
             </div>
-          </details>
+            <ul className="mt-4 divide-y divide-stone-200 border-y border-stone-200">
+              {past.map((r) => (
+                <PastRow key={r.id} r={r} slug={slug} />
+              ))}
+            </ul>
+          </div>
         ) : null}
-      </main>
-    </>
+      </section>
+    </PageShell>
   );
 }
 
-function ReservationSection({
+function PortalSection({
   title,
-  tone,
-  slug,
   rows,
-  emptyState,
+  slug,
+  highlight = false,
+  emptyText,
+  propertyName,
 }: {
   title: string;
-  tone: string;
+  rows: Reservation[];
   slug: string;
-  rows: Array<{
-    id: string;
-    confirmationCode: string;
-    checkIn: Date;
-    checkOut: Date;
-    site: { label: string };
-    totalCents: number;
-    status: string;
-  }>;
-  emptyState?: React.ReactNode;
+  highlight?: boolean;
+  emptyText?: string;
+  propertyName?: string;
 }) {
   return (
-    <section className={`rounded-lg border bg-card p-5 ${tone}`}>
-      <h2 className="text-lg font-medium">{title}</h2>
+    <div>
+      <div className="flex items-baseline justify-between">
+        <h2 className="font-serif text-[26px] leading-tight text-stone-900 md:text-[28px]">
+          {title.toLowerCase()}
+        </h2>
+        <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-stone-500">
+          {rows.length === 0 ? "—" : String(rows.length)}
+        </div>
+      </div>
       {rows.length === 0 ? (
-        <div className="mt-3">{emptyState ?? null}</div>
+        <div className="mt-4 rounded-md border border-dashed border-stone-300 bg-white p-8 text-center text-[14px] text-stone-500">
+          {emptyText}
+          {propertyName ? (
+            <>
+              {" "}
+              <Link
+                href={`/p/${slug}`}
+                className="ml-1 text-stone-700 underline underline-offset-4 hover:text-stone-900"
+              >
+                Browse sites →
+              </Link>
+            </>
+          ) : null}
+        </div>
       ) : (
-        <ul className="mt-3 space-y-2">
+        <ul className="mt-5 space-y-3">
           {rows.map((r) => (
-            <ReservationRow key={r.id} slug={slug} reservation={r} />
+            <BookingCard
+              key={r.id}
+              r={r}
+              slug={slug}
+              highlight={highlight}
+            />
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }
 
-function ReservationRow({
+function BookingCard({
+  r,
   slug,
-  reservation: r,
+  highlight,
 }: {
+  r: Reservation;
   slug: string;
-  reservation: {
-    confirmationCode: string;
-    checkIn: Date;
-    checkOut: Date;
-    site: { label: string };
-    totalCents: number;
-    status: string;
-  };
+  highlight: boolean;
 }) {
+  const checkInIso = r.checkIn.toISOString().slice(0, 10);
+  const checkOutIso = r.checkOut.toISOString().slice(0, 10);
+  const nights = nightsBetween(checkInIso, checkOutIso);
+  const ring = highlight
+    ? "border-emerald-700/20 bg-[#f0f5ef]"
+    : "border-stone-200 bg-white";
+  return (
+    <li>
+      <Link
+        href={`/p/${slug}/portal/r/${r.confirmationCode}`}
+        className={`block overflow-hidden rounded-md border ${ring} shadow-[0_8px_24px_-12px_rgba(20,15,8,0.12)] transition hover:shadow-[0_16px_40px_-16px_rgba(20,15,8,0.18)]`}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12">
+          <PortalCell label="Stay" className="lg:col-span-3">
+            <div className="font-serif text-[22px] leading-none text-stone-900 md:text-[26px]">
+              {dateNice(checkInIso)} → {dateNice(checkOutIso)}
+            </div>
+            <div className="mt-1 text-[12px] text-stone-500">
+              {nights} night{nights === 1 ? "" : "s"}
+            </div>
+          </PortalCell>
+          <PortalCell
+            label="Site"
+            className="border-stone-200 sm:border-l lg:col-span-3"
+          >
+            <div className="font-serif text-[22px] leading-none text-stone-900 md:text-[26px]">
+              {r.site.label}
+            </div>
+            <div className="mt-1 text-[12px] text-stone-500">
+              {r.site.siteType.name}
+            </div>
+          </PortalCell>
+          <PortalCell
+            label="Code"
+            className="border-stone-200 lg:col-span-3 lg:border-l"
+          >
+            <div className="font-mono text-[16px] tracking-[0.16em] text-stone-900 md:text-[18px]">
+              {r.confirmationCode}
+            </div>
+            <div className="mt-1.5">
+              <StatusPill status={r.status} />
+            </div>
+          </PortalCell>
+          <div className="flex flex-col items-end justify-between border-stone-200 p-5 sm:border-l sm:[&]:border-l lg:col-span-3 lg:border-l md:p-6">
+            <div className="text-right">
+              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-stone-500">
+                Total
+              </div>
+              <div className="mt-1.5 font-serif text-[24px] leading-none text-stone-900 tabular-nums md:text-[28px]">
+                {formatCents(r.totalCents)}
+              </div>
+            </div>
+            <div className="mt-3 text-[13px] text-stone-700">
+              View details →
+            </div>
+          </div>
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+function PortalCell({
+  label,
+  className = "",
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`p-5 md:p-6 ${className}`}>
+      <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-stone-500">
+        {label}
+      </div>
+      <div className="mt-1.5">{children}</div>
+    </div>
+  );
+}
+
+function PastRow({ r, slug }: { r: Reservation; slug: string }) {
+  const checkInIso = r.checkIn.toISOString().slice(0, 10);
+  const checkOutIso = r.checkOut.toISOString().slice(0, 10);
   const nights = Math.round(
     (r.checkOut.getTime() - r.checkIn.getTime()) / ONE_DAY_MS,
   );
@@ -202,27 +337,22 @@ function ReservationRow({
     <li>
       <Link
         href={`/p/${slug}/portal/r/${r.confirmationCode}`}
-        className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-background/60 p-3 hover:bg-muted/60"
+        className="grid grid-cols-12 items-baseline gap-3 py-4 text-[13.5px] hover:bg-stone-50/60 sm:gap-6"
       >
-        <div className="min-w-0 flex-1">
-          <div className="font-mono text-sm">{r.confirmationCode}</div>
-          <div className="text-xs text-muted-foreground tabular-nums">
-            {r.checkIn.toISOString().slice(0, 10)} →{" "}
-            {r.checkOut.toISOString().slice(0, 10)} · {nights} night
-            {nights === 1 ? "" : "s"} · Site {r.site.label}
-          </div>
+        <div className="col-span-12 font-mono text-[13px] tracking-[0.14em] text-stone-700 sm:col-span-3">
+          {r.confirmationCode}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="font-medium tabular-nums">
-            {formatCents(r.totalCents)}
-          </span>
-          <span
-            className={`rounded-full px-2 py-0.5 text-xs ${
-              STATUS_TONE[r.status] ?? "bg-muted text-muted-foreground"
-            }`}
-          >
-            {r.status.replace("_", " ")}
-          </span>
+        <div className="col-span-6 text-stone-600 tabular-nums sm:col-span-3">
+          {dateNice(checkInIso)} → {dateNice(checkOutIso)}
+        </div>
+        <div className="col-span-6 text-stone-500 sm:col-span-2">
+          Site {r.site.label}
+        </div>
+        <div className="col-span-6 text-stone-500 tabular-nums sm:col-span-2">
+          {nights}n · {formatCents(r.totalCents)}
+        </div>
+        <div className="col-span-6 text-right sm:col-span-2">
+          <StatusPill status={r.status} />
         </div>
       </Link>
     </li>
