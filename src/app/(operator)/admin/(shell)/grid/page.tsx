@@ -298,79 +298,96 @@ export default async function GridPage({
               );
             })}
 
-            {/* Group + site rows. We let CSS Grid auto-flow them in
-                row-by-row order. The site-label cells use position:sticky
-                left:0 so the label stays visible during horizontal
-                scroll. */}
-            {matrix.groups.flatMap((group, gIdx) => {
-              const groupHeaderRow = (
-                <div
-                  key={`g-${group.siteTypeId}`}
-                  className="border-b border-t bg-muted/40 px-2 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                  style={{ gridColumn: `1 / ${totalCols + 1}` }}
-                >
-                  {group.siteTypeName} · {group.rows.length} site
-                  {group.rows.length === 1 ? "" : "s"}
-                </div>
-              );
-              const rowFragments = group.rows.flatMap((row) => {
-                const cells: React.ReactNode[] = [];
+            {/* Group + site rows. Every cell uses an explicit gridRow +
+                gridColumn so reservation segments (which need explicit
+                gridColumn for date placement) can't push the auto-flow
+                cursor and shove subsequent label cells off to the right.
+                The site-label cells use position:sticky left:0 so the
+                label stays visible during horizontal scroll. */}
+            {(() => {
+              const cells: React.ReactNode[] = [];
+              // Row 1 is the date header. Content rows start at row 2.
+              let row = 2;
+              for (const group of matrix.groups) {
                 cells.push(
                   <div
-                    key={`label-${row.siteId}`}
-                    className="sticky left-0 z-10 border-b border-r bg-card px-2 py-2 text-sm font-medium"
+                    key={`g-${group.siteTypeId}`}
+                    className="border-b border-t bg-muted/40 px-2 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                    style={{
+                      gridRow: row,
+                      gridColumn: `1 / ${totalCols + 1}`,
+                    }}
                   >
-                    {row.siteLabel}
+                    {group.siteTypeName} · {group.rows.length} site
+                    {group.rows.length === 1 ? "" : "s"}
                   </div>,
                 );
-                // Empty day cells so grid lines render even on rows with
-                // no reservations.
-                for (let i = 0; i < dayCount; i++) {
-                  const isToday = i === todayIndex;
-                  const date = new Date(
-                    rangeStart.getTime() + i * ONE_DAY_MS,
-                  );
-                  const isFirstOfMonth = date.getUTCDate() === 1;
+                row++;
+                for (const siteRow of group.rows) {
+                  const thisRow = row;
                   cells.push(
                     <div
-                      key={`cell-${row.siteId}-${i}`}
-                      className={[
-                        "border-b h-12",
-                        isFirstOfMonth ? "border-l-2 border-l-foreground/40" : "border-l border-l-border/60",
-                        isToday ? "bg-amber-50/40 dark:bg-amber-950/20" : "",
-                      ].join(" ")}
-                    />,
-                  );
-                }
-                // Reservation segments overlay the empty cells.
-                for (const seg of row.segments) {
-                  const styleEntry = STATUS_STYLE[seg.status];
-                  const tooltip = tooltipText(seg);
-                  const startCol = seg.startDayIndex + 2;
-                  const endCol = seg.endDayIndex + 2;
-                  cells.push(
-                    <Link
-                      key={`seg-${seg.reservationId}`}
-                      href={`/admin/reservations/${seg.reservationId}`}
-                      title={tooltip}
-                      className={`mx-px my-1 flex items-center overflow-hidden rounded border px-1.5 text-[11px] font-medium leading-tight hover:ring-2 hover:ring-ring/50 ${styleEntry.base}`}
-                      style={{
-                        gridColumn: `${startCol} / ${endCol}`,
-                        ...styleEntry.inline,
-                      }}
+                      key={`label-${siteRow.siteId}`}
+                      className="sticky left-0 z-10 border-b border-r bg-card px-2 py-2 text-sm font-medium"
+                      style={{ gridRow: thisRow, gridColumn: 1 }}
                     >
-                      <span className="truncate">
-                        {seg.startsBeforeRange ? "← " : ""}
-                        {seg.guestLastName} · {seg.nights}n
-                        {seg.endsAfterRange ? " →" : ""}
-                      </span>
-                    </Link>,
+                      {siteRow.siteLabel}
+                    </div>,
                   );
+                  // Empty day cells so grid lines render even on rows
+                  // with no reservations.
+                  for (let i = 0; i < dayCount; i++) {
+                    const isToday = i === todayIndex;
+                    const date = new Date(
+                      rangeStart.getTime() + i * ONE_DAY_MS,
+                    );
+                    const isFirstOfMonth = date.getUTCDate() === 1;
+                    cells.push(
+                      <div
+                        key={`cell-${siteRow.siteId}-${i}`}
+                        className={[
+                          "border-b h-12",
+                          isFirstOfMonth
+                            ? "border-l-2 border-l-foreground/40"
+                            : "border-l border-l-border/60",
+                          isToday ? "bg-amber-50/40 dark:bg-amber-950/20" : "",
+                        ].join(" ")}
+                        style={{ gridRow: thisRow, gridColumn: 2 + i }}
+                      />,
+                    );
+                  }
+                  // Reservation segments overlay the empty cells. Same
+                  // explicit row so they line up with the label.
+                  for (const seg of siteRow.segments) {
+                    const styleEntry = STATUS_STYLE[seg.status];
+                    const tooltip = tooltipText(seg);
+                    const startCol = seg.startDayIndex + 2;
+                    const endCol = seg.endDayIndex + 2;
+                    cells.push(
+                      <Link
+                        key={`seg-${seg.reservationId}`}
+                        href={`/admin/reservations/${seg.reservationId}`}
+                        title={tooltip}
+                        className={`mx-px my-1 flex items-center overflow-hidden rounded border px-1.5 text-[11px] font-medium leading-tight hover:ring-2 hover:ring-ring/50 ${styleEntry.base}`}
+                        style={{
+                          gridRow: thisRow,
+                          gridColumn: `${startCol} / ${endCol}`,
+                          ...styleEntry.inline,
+                        }}
+                      >
+                        <span className="truncate">
+                          {seg.startsBeforeRange ? "← " : ""}
+                          {seg.guestLastName} · {seg.nights}n
+                          {seg.endsAfterRange ? " →" : ""}
+                        </span>
+                      </Link>,
+                    );
+                  }
+                  row++;
                 }
-                return cells;
-              });
-              return [groupHeaderRow, ...rowFragments];
-            })}
+              }
+              return cells;
+            })()}
 
             {/* Today vertical line — single overlay element spanning all
                 rows. pointer-events-none lets clicks fall through to the
